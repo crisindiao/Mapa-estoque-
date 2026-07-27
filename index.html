@@ -9,6 +9,7 @@
   * { box-sizing: border-box; }
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: #3a3f45; border-radius: 4px; }
+  button { font-family: 'Inter', system-ui, sans-serif; }
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -22,8 +23,1043 @@
 </div>
 
 <script>
-const{useEffect,useRef,useState,useMemo,useCallback}=React,ITEM_FIELDS=["cliente","codigo","desc","qtde","lote","validade","vencido","perecivel","danificado","giroScore"];function itemToObj(d){const r={};return ITEM_FIELDS.forEach((s,p)=>{r[s]=d[p]}),r}function buildCorridors(d){var p;const r=[...d].sort(),s=[];for(let m=0;m<r.length;m+=2)s.push({left:r[m],right:(p=r[m+1])!=null?p:null});return s}function giroColor(d){const r=new THREE.Color(3050327),s=new THREE.Color(15245626),p=new THREE.Color(12597547),m=new THREE.Color;return d<.5?m.copy(r).lerp(s,d*2):m.copy(s).lerp(p,(d-.5)*2),m}const COL_SPACING=1.35,LEVEL_HEIGHT=1.9,RACK_DEPTH=1.15,AISLE_WIDTH=3.4,CORRIDOR_GAP=2.6,BASE_LEVEL_Y=.15,BEAM_THICK=.08,POST_SIZE=.12;function buildLayout(d){const r=Array.from(new Set(d.map(f=>f.rua))),s=buildCorridors(r),p=Math.max(...d.map(f=>f.col)),m=Math.max(...d.map(f=>f.niv)),Z={},j={};d.forEach(f=>{Z[f.rua]=Math.max(Z[f.rua]||0,f.col),j[f.rua]=Math.max(j[f.rua]||0,f.niv)});const X=AISLE_WIDTH+RACK_DEPTH*2+CORRIDOR_GAP,C={};s.forEach((f,L)=>{const O=L*X;f.left&&(C[f.left]=O-AISLE_WIDTH/2-RACK_DEPTH/2),f.right&&(C[f.right]=O+AISLE_WIDTH/2+RACK_DEPTH/2)});const J=s.length*X,H=p*COL_SPACING;return{ruas:r,corridors:s,ruaX:C,maxCol:p,maxLevel:m,maxColByRua:Z,maxLevelByRua:j,corridorSpanX:X,totalWidth:J,totalDepth:H}}function DetailPanel({selected:d,onClose:r}){if(!d)return null;const s=d.itens.map(itemToObj);return React.createElement("div",{style:{position:"absolute",top:0,right:0,width:360,maxWidth:"90vw",height:"100%",background:"rgba(17,20,23,0.97)",color:"#f4efe6",padding:"20px 18px",overflowY:"auto",boxShadow:"-8px 0 24px rgba(0,0,0,0.4)",fontFamily:"'Inter', system-ui, sans-serif",borderLeft:"1px solid rgba(232,161,58,0.25)",zIndex:20}},React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}},React.createElement("h2",{style:{margin:0,fontSize:20,fontFamily:"'JetBrains Mono', monospace",color:"#e8a13a"}},d.pos),React.createElement("button",{onClick:r,style:{background:"none",border:"none",color:"#a8a29a",fontSize:22,cursor:"pointer",lineHeight:1}},"\xD7")),React.createElement("p",{style:{margin:"2px 0 6px",fontSize:12,color:"#a8a29a"}},"Rua ",d.rua," \xB7 Coluna ",d.col," \xB7 N\xEDvel ",d.niv," \u2014 ",s.length," ",s.length===1?"lote/SKU":"lotes/SKUs"),d.alerta&&React.createElement("div",{style:{background:"rgba(192,57,43,0.18)",border:"1px solid rgba(192,57,43,0.5)",borderRadius:6,padding:"6px 10px",fontSize:11,color:"#ff8a80",marginBottom:10}},"\u26A0 Posi\xE7\xE3o cont\xE9m item vencido ou danificado"),s.map((p,m)=>React.createElement("div",{key:m,style:{borderTop:m===0?"1px solid rgba(255,255,255,0.08)":"none",borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"10px 0",fontSize:13}},React.createElement("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:4,alignItems:"center"}},React.createElement("span",{style:{background:"#3a4550",color:"#f4efe6",fontWeight:700,fontSize:11,padding:"1px 6px",borderRadius:4}},p.cliente),React.createElement("span",{style:{color:"#a8a29a",fontFamily:"'JetBrains Mono', monospace",fontSize:11}},p.codigo)),React.createElement("div",{style:{marginBottom:4,lineHeight:1.35}},p.desc),React.createElement("div",{style:{display:"flex",gap:12,flexWrap:"wrap",color:"#a8a29a",fontSize:11,marginBottom:4}},React.createElement("span",null,"Qtd: ",React.createElement("strong",{style:{color:"#f4efe6"}},p.qtde)),React.createElement("span",null,"Lote: ",p.lote||"\u2014"),React.createElement("span",null,"Val: ",p.validade||"\u2014")),React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},p.vencido&&React.createElement("span",{style:{fontSize:10,background:"rgba(192,57,43,0.25)",color:"#ff8a80",padding:"1px 6px",borderRadius:4}},"VENCIDO"),p.danificado&&React.createElement("span",{style:{fontSize:10,background:"rgba(192,57,43,0.25)",color:"#ff8a80",padding:"1px 6px",borderRadius:4}},"DANIFICADO"),p.perecivel&&React.createElement("span",{style:{fontSize:10,background:"rgba(41,128,185,0.25)",color:"#8ecff5",padding:"1px 6px",borderRadius:4}},"PEREC\xCDVEL")))))}function Armazem3D(){const d=useRef(null),r=useRef({}),[s,p]=useState(null),[m,Z]=useState(null),[j,X]=useState(0),[C,J]=useState(null),[H,f]=useState("orbit"),[L,O]=useState(""),[U,ye]=useState(""),q=useRef(H);q.current=H,useEffect(()=>{let o=!1;async function i(){try{const h=await fetch("./estoque.json");if(!h.ok)throw new Error("HTTP "+h.status);const P=h.headers.get("Content-Length"),A=P?parseInt(P,10):0;if(!h.body||!A){const I=await h.json();o||p(I);return}const ee=h.body.getReader();let Y=0;const B=[];for(;;){const{done:I,value:W}=await ee.read();if(I)break;B.push(W),Y+=W.length,o||X(Math.min(99,Math.round(Y/A*100)))}const ce=await new Blob(B).text(),x=JSON.parse(ce);o||(X(100),p(x))}catch(h){o||Z(h.message)}}return i(),()=>{o=!0}},[]);const V=useMemo(()=>s?buildLayout(s):null,[s]),tt=useMemo(()=>s?s.reduce((o,i)=>o+i.itens.length,0):0,[s]),Se=useMemo(()=>s?s.filter(o=>o.alerta).length:0,[s]),ot=useMemo(()=>{if(!s)return[];const o=new Set;return s.forEach(i=>i.itens.forEach(h=>{h[0]&&o.add(h[0])})),Array.from(o).sort()},[s]),Ce=U?`Cliente: ${U}`:L.trim()?`Busca: "${L.trim()}"`:null,w=useMemo(()=>{if(!s)return[];if(U)return s.filter(o=>o.itens.some(i=>i[0]===U));if(L.trim()){const o=L.trim().toUpperCase();return s.filter(i=>i.pos.toUpperCase().includes(o)||i.itens.some(h=>(h[0]||"").toUpperCase().includes(o)||(h[1]||"").toUpperCase().includes(o)||(h[2]||"").toUpperCase().includes(o)))}return[]},[s,L,U]),ve=useMemo(()=>w.slice(0,40),[w]),le=useMemo(()=>w.length?Array.from(new Set(w.map(o=>o.rua))).sort():[],[w]);useEffect(()=>{const o=w.length?new Set(w.map(i=>i.pos)):null;r.current.applyFilterHighlight&&r.current.applyFilterHighlight(o)},[w]),useEffect(()=>{var o,i;r.current.selectedPos=(o=C==null?void 0:C.pos)!=null?o:null,r.current.setSelectedByPos&&r.current.setSelectedByPos((i=C==null?void 0:C.pos)!=null?i:null)},[C]),useEffect(()=>{r.current.onModeChange&&r.current.onModeChange(H)},[H]);const nt=useCallback(o=>{J(o);const i=r.current.focusCamera;i&&i(o)},[]),rt=useCallback(o=>{const i=r.current.jumpToRua;i&&i(o)},[]),at=useCallback(()=>{const o=r.current.resetView;o&&o()},[]);if(useEffect(()=>{var et;if(!s||!V)return;const o=d.current,i=o.clientWidth,h=o.clientHeight,{ruas:P,ruaX:A,maxColByRua:ee,maxLevelByRua:Y,totalWidth:B,totalDepth:F,corridorSpanX:ce}=V,x=new THREE.Scene;x.background=new THREE.Color(856083),x.fog=new THREE.Fog(856083,30,110);const I=B/2-ce/2,W=F/2,de=Math.max(B,F)*1.3+20,ze=P.map(e=>ee[e]||0).sort((e,t)=>e-t),Te=(ze[Math.floor(ze.length/2)]||1)*COL_SPACING,He=Math.min(de,Math.max(B,Te)*.55+14),M=new THREE.PerspectiveCamera(55,i/h,.1,500),g=new THREE.WebGLRenderer({antialias:!0,powerPreference:"high-performance"});g.setSize(i,h),g.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5)),o.appendChild(g.domElement),x.add(new THREE.AmbientLight(16777215,.65));const Ie=new THREE.DirectionalLight(16773856,1.05);Ie.position.set(I+25,35,W+18),x.add(Ie),x.add(new THREE.HemisphereLight(8952234,1710618,.45));const st=new THREE.PlaneGeometry(B+20,F+20),it=new THREE.MeshStandardMaterial({color:2237995,roughness:.95}),be=new THREE.Mesh(st,it);be.rotation.x=-Math.PI/2,be.position.set(I,0,W),x.add(be);const lt=new THREE.MeshStandardMaterial({color:13214247,roughness:.85,transparent:!0,opacity:.3});V.corridors.forEach((e,t)=>{const n=t*ce,u=new THREE.Mesh(new THREE.PlaneGeometry(AISLE_WIDTH*.94,F),lt);u.rotation.x=-Math.PI/2,u.position.set(n,.01,W),x.add(u)});const ct=new THREE.MeshStandardMaterial({color:2250154,roughness:.4,metalness:.6}),dt=new THREE.MeshStandardMaterial({color:14509585,roughness:.4,metalness:.5}),ke={};P.forEach(e=>{ke[e]=(Y[e]||1)*LEVEL_HEIGHT+BASE_LEVEL_Y+.3});let Le=0,Pe=0;P.forEach(e=>{Le+=((ee[e]||0)+1)*2,Pe+=((Y[e]||0)+1)*2});const ut=new THREE.BoxGeometry(POST_SIZE,1,POST_SIZE),Ee=new THREE.InstancedMesh(ut,ct,Math.max(1,Le));let pt=0;const z=new THREE.Object3D,ft=new THREE.BoxGeometry(BEAM_THICK,BEAM_THICK,1),we=new THREE.InstancedMesh(ft,dt,Math.max(1,Pe));let ht=0;P.forEach(e=>{const t=A[e];if(t===void 0)return;const n=ee[e]||0,u=Y[e]||0,c=ke[e],T=n*COL_SPACING+.3;for(let K=0;K<=n;K++){const se=K*COL_SPACING;[-RACK_DEPTH/2,RACK_DEPTH/2].forEach(ie=>{z.position.set(t+ie,c/2,se),z.scale.set(1,c,1),z.updateMatrix(),Ee.setMatrixAt(pt++,z.matrix)})}for(let K=0;K<=u;K++){const se=BASE_LEVEL_Y+K*LEVEL_HEIGHT;[-RACK_DEPTH/2,RACK_DEPTH/2].forEach(ie=>{z.position.set(t+ie,se,n*COL_SPACING/2),z.scale.set(1,1,T),z.updateMatrix(),we.setMatrixAt(ht++,z.matrix)})}const b=document.createElement("canvas");b.width=160,b.height=72;const E=b.getContext("2d");E.fillStyle="#f4efe6",E.font="bold 46px monospace",E.textAlign="center",E.textBaseline="middle",E.fillText(e,80,36);const N=new THREE.CanvasTexture(b),ae=new THREE.Sprite(new THREE.SpriteMaterial({map:N,transparent:!0}));ae.position.set(t,c+.7,-1.4),ae.scale.set(1.8,.9,1),x.add(ae)}),Ee.instanceMatrix.needsUpdate=!0,we.instanceMatrix.needsUpdate=!0,x.add(Ee),x.add(we);const gt=s.filter(e=>A[e.rua]!==void 0),Ae=new THREE.Color(16777215),mt=new THREE.Color(2764339),G=gt.map(e=>{const t=A[e.rua],n=e.col*COL_SPACING,u=e.itens.length,c=RACK_DEPTH*.72,T=LEVEL_HEIGHT*(.4+Math.min(u,10)*.05),b=BASE_LEVEL_Y+(e.niv-1)*LEVEL_HEIGHT+T/2+.08,E=giroColor(e.giro);return{data:e,x:t,y:b,z:n,boxSize:c,boxHeight:T,baseColor:E}}),xt=new THREE.BoxGeometry(1,1,1),yt=new THREE.MeshStandardMaterial({vertexColors:!0,roughness:.5,metalness:.1}),y=new THREE.InstancedMesh(xt,yt,Math.max(1,G.length));y.frustumCulled=!1;const Be=new Map,De=(e,t)=>{const n=G[e];z.position.set(n.x,n.y,n.z),z.scale.set(n.boxSize*t,n.boxHeight*t,n.boxSize*.85*t),z.updateMatrix(),y.setMatrixAt(e,z.matrix)};G.forEach((e,t)=>{Be.set(e.data.pos,t),De(t,1),y.setColorAt(t,e.baseColor)}),y.instanceMatrix.needsUpdate=!0,y.instanceColor&&(y.instanceColor.needsUpdate=!0),x.add(y);let Me=null;const vt=e=>{const t=G[e];return Me?Me.has(t.data.pos)?t.baseColor.clone().lerp(Ae,.55):t.baseColor.clone().lerp(mt,.82):t.baseColor},Ke=(e,t)=>{const n=vt(e);y.setColorAt(e,t?n.clone().lerp(Ae,t):n)},Fe=[];G.forEach(e=>{if(!e.data.alerta)return;const t=new THREE.BoxGeometry(e.boxSize*1.18,e.boxHeight*1.18,e.boxSize*.85*1.18),n=new THREE.MeshBasicMaterial({color:16720418,transparent:!0,opacity:.5,wireframe:!0}),u=new THREE.Mesh(t,n);u.position.set(e.x,e.y,e.z),x.add(u),Fe.push(u)}),r.current.applyFilterHighlight=e=>{Me=e&&e.size?e:null;for(let t=0;t<G.length;t++)Ke(t,t===k||t===D?.3:0);y.instanceColor&&(y.instanceColor.needsUpdate=!0)};let k=null,D=null;const te=(e,t,n)=>{e!==null&&(De(e,t||n?1.14:1),Ke(e,t?.4:n?.22:0),y.instanceMatrix.needsUpdate=!0,y.instanceColor&&(y.instanceColor.needsUpdate=!0))};r.current.setSelectedByPos=e=>{const t=e!=null?Be.get(e):null;if(t===D)return;const n=D;D=t!=null?t:null,n!==null&&n!==k?te(n,!1,!1):n!==null&&te(n,!1,!0),D!==null&&te(D,!0,D===k)};const bt=P.length&&(et=A[P[0]])!=null?et:I,v=new THREE.Vector3(bt,1.7,Math.min(Te*.35,W)),l=new THREE.Spherical;l.radius=He,l.theta=Math.PI*.22,l.phi=Math.PI/3.1;const a={x:I,z:1,yaw:Math.PI,pitch:0,y:1.6},R={};r.current.setKey=(e,t)=>{R[e]=t};const _=(e,t,n)=>Math.max(t,Math.min(n,e)),We=()=>{v.x=_(v.x,-40,B+40),v.z=_(v.z,-40,F+40)},je=()=>{a.x=_(a.x,-30,B+30),a.z=_(a.z,-10,F+10)},S=new Map;let oe=!1,ue=0,pe=0,Re=0,ne=null,re=null,fe=null;const Ue=(e,t)=>Math.hypot(e.x-t.x,e.y-t.y),Ve=(e,t)=>({x:(e.x+t.x)/2,y:(e.y+t.y)/2}),Ge=e=>{if(S.set(e.pointerId,{x:e.clientX,y:e.clientY}),S.size===1)oe=!0,ue=e.clientX,pe=e.clientY,Re=0;else if(S.size===2){oe=!1;const t=Array.from(S.values());ne=Ue(t[0],t[1]),re=Ve(t[0],t[1]),fe=v.clone()}},he=e=>{if(S.delete(e.pointerId),S.size<2&&(ne=null,re=null),S.size===0)oe=!1;else if(S.size===1){const t=Array.from(S.values())[0];oe=!0,ue=t.x,pe=t.y}},Xe=e=>{if(S.has(e.pointerId)&&S.set(e.pointerId,{x:e.clientX,y:e.clientY}),S.size>=2&&q.current==="orbit"){const u=Array.from(S.values()),c=Ue(u[0],u[1]),T=Ve(u[0],u[1]);if(ne!=null&&(l.radius=_(l.radius+(ne-c)*.025,4,de),ne=c),re&&fe){const b=T.x-re.x,E=T.y-re.y,N=l.theta,ae=Math.cos(N),K=-Math.sin(N),se=-Math.sin(N),ie=-Math.cos(N),xe=l.radius*.0028;v.x=fe.x-ae*b*xe+se*E*xe,v.z=fe.z-K*b*xe+ie*E*xe,We()}return}const t=e.clientX-ue,n=e.clientY-pe;oe&&(Re+=Math.abs(t)+Math.abs(n),q.current==="orbit"?(l.theta-=t*.006,l.phi=Math.max(.15,Math.min(Math.PI/2.05,l.phi+n*.006))):(a.yaw-=t*.004,a.pitch=Math.max(-1.1,Math.min(1.1,a.pitch-n*.004)))),ue=e.clientX,pe=e.clientY},Oe=e=>{e.preventDefault(),q.current==="orbit"&&(l.radius=_(l.radius+e.deltaY*.02,4,de))},qe=e=>{R[e.code]=!0},Ye=e=>{R[e.code]=!1};g.domElement.addEventListener("pointerdown",Ge),window.addEventListener("pointerup",he),window.addEventListener("pointercancel",he),window.addEventListener("pointermove",Xe),g.domElement.addEventListener("wheel",Oe,{passive:!1}),window.addEventListener("keydown",qe),window.addEventListener("keyup",Ye),g.domElement.style.touchAction="none";const ge=new THREE.Raycaster,me=new THREE.Vector2,_e=e=>{const t=g.domElement.getBoundingClientRect();me.x=(e.clientX-t.left)/t.width*2-1,me.y=-((e.clientY-t.top)/t.height)*2+1};g.domElement.addEventListener("mousemove",_e);const Ne=()=>{if(Re>6)return;ge.setFromCamera(me,M);const e=ge.intersectObject(y);if(e.length>0){const t=e[0].instanceId,n=G[t].data;J(u=>u&&u.pos===n.pos?null:n)}};g.domElement.addEventListener("click",Ne),r.current.focusCamera=e=>{const t=A[e.rua],n=e.col*COL_SPACING,u=BASE_LEVEL_Y+(e.niv-1)*LEVEL_HEIGHT+1;v.set(t,u,n),l.radius=6,l.theta=Math.PI/4,l.phi=Math.PI/3,f("orbit")},r.current.jumpToRua=e=>{const t=A[e];t!==void 0&&(v.set(t,1.7,Math.min(F*.15,8)),l.radius=Math.min(de,22),l.theta=Math.PI*.18,l.phi=Math.PI/3,f("orbit"))},r.current.resetView=()=>{v.set(I,1.7,W),l.radius=He,l.theta=Math.PI*.22,l.phi=Math.PI/3.1,f("orbit")},r.current.onModeChange=e=>{e==="walk"?(a.x=M.position.x,a.z=M.position.z,a.y=1.6,a.yaw=Math.atan2(v.x-M.position.x,v.z-M.position.z),a.pitch=0,je()):(v.set(a.x,1.7,a.z),l.radius=9,l.theta=a.yaw+Math.PI,l.phi=Math.PI/3,We())};let Ze;const Et=new THREE.Clock;let Je=0;const $e=()=>{Ze=requestAnimationFrame($e);const e=Math.min(Et.getDelta(),.05);if(Je+=e,q.current==="orbit"){const c=new THREE.Vector3().setFromSpherical(l);M.position.copy(v).add(c),M.lookAt(v)}else{const c=(R.ShiftLeft||R.run?8:4.2)*e,T=new THREE.Vector3(Math.sin(a.yaw),0,Math.cos(a.yaw)),b=new THREE.Vector3(Math.cos(a.yaw),0,-Math.sin(a.yaw));(R.KeyW||R.ArrowUp)&&(a.x-=T.x*c,a.z-=T.z*c),(R.KeyS||R.ArrowDown)&&(a.x+=T.x*c,a.z+=T.z*c),(R.KeyA||R.ArrowLeft)&&(a.x-=b.x*c,a.z-=b.z*c),(R.KeyD||R.ArrowRight)&&(a.x+=b.x*c,a.z+=b.z*c),je(),M.position.set(a.x,a.y,a.z);const E=new THREE.Vector3(-Math.sin(a.yaw)*Math.cos(a.pitch),Math.sin(a.pitch),-Math.cos(a.yaw)*Math.cos(a.pitch));M.lookAt(a.x+E.x,a.y+E.y,a.z+E.z)}ge.setFromCamera(me,M);const t=ge.intersectObject(y),n=t.length>0?t[0].instanceId:null;if(n!==k){const c=k;k=n,c!==null&&c!==D&&te(c,!1,!1),k!==null&&te(k,k===D,!0),o.style.cursor=k!==null?"pointer":q.current==="walk"?"crosshair":"grab"}const u=.35+Math.sin(Je*4)*.25;Fe.forEach(c=>{c.material.opacity=u}),g.render(x,M)};$e();const Qe=()=>{const e=o.clientWidth,t=o.clientHeight;M.aspect=e/t,M.updateProjectionMatrix(),g.setSize(e,t)};return window.addEventListener("resize",Qe),r.current.cleanup=()=>{cancelAnimationFrame(Ze),window.removeEventListener("resize",Qe),window.removeEventListener("pointerup",he),window.removeEventListener("pointercancel",he),window.removeEventListener("pointermove",Xe),window.removeEventListener("keydown",qe),window.removeEventListener("keyup",Ye),g.domElement.removeEventListener("pointerdown",Ge),g.domElement.removeEventListener("wheel",Oe),g.domElement.removeEventListener("mousemove",_e),g.domElement.removeEventListener("click",Ne),g.dispose(),o.contains(g.domElement)&&o.removeChild(g.domElement)},()=>r.current.cleanup&&r.current.cleanup()},[s,V]),m)return React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",color:"#ff8a80",fontFamily:"system-ui",fontSize:14,textAlign:"center",padding:20}},React.createElement("div",null,"Erro ao carregar estoque.json: ",m,React.createElement("br",null),"Verifique se o arquivo est\xE1 na mesma pasta que o index.html e se a conex\xE3o est\xE1 est\xE1vel."));if(!s||!V)return React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",color:"#a8a29a",fontFamily:"system-ui",fontSize:14,gap:12}},React.createElement("div",null,"Carregando armaz\xE9m... ",j>0?`${j}%`:""),React.createElement("div",{style:{width:220,height:6,borderRadius:3,background:"#2a2e33",overflow:"hidden"}},React.createElement("div",{style:{width:`${j}%`,height:"100%",background:"#8ecff5",transition:"width 0.2s"}})),React.createElement("div",{style:{fontSize:11,color:"#6b6f74"}},"Baixando dados do estoque (~3.7 MB)"));const $={width:52,height:52,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.15)",background:"rgba(20,24,28,0.85)",color:"#f4efe6",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none",touchAction:"none"},Q=o=>({onPointerDown:i=>{i.preventDefault(),r.current.setKey&&r.current.setKey(o,!0)},onPointerUp:i=>{i.preventDefault(),r.current.setKey&&r.current.setKey(o,!1)},onPointerLeave:()=>{r.current.setKey&&r.current.setKey(o,!1)},onPointerCancel:()=>{r.current.setKey&&r.current.setKey(o,!1)}});return React.createElement("div",{style:{width:"100%",height:"100vh",position:"relative",background:"#0d1013",fontFamily:"'Inter', system-ui, sans-serif",overflow:"hidden"}},React.createElement("div",{style:{position:"absolute",top:0,left:0,right:0,zIndex:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",padding:"16px 20px",pointerEvents:"none",flexWrap:"wrap",gap:8}},React.createElement("div",{style:{pointerEvents:"auto"}},React.createElement("h1",{style:{margin:0,fontSize:20,color:"#f4efe6",letterSpacing:"-0.02em",fontFamily:"'JetBrains Mono', monospace"}},"ARMAZ\xC9M 3D \u2014 IMAGINAE"),React.createElement("p",{style:{margin:"2px 0 8px",fontSize:12,color:"#a8a29a"}},s.length.toLocaleString("pt-BR")," posi\xE7\xF5es \xB7 ",tt.toLocaleString("pt-BR")," lotes/SKUs \xB7 ",V.ruas.length," ruas",Se>0&&React.createElement("span",{style:{color:"#ff8a80"}}," \xB7 ",Se," com alerta \u26A0")),React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},React.createElement("input",{type:"text",value:L,onChange:o=>{O(o.target.value),o.target.value.trim()&&ye("")},placeholder:"Buscar posi\xE7\xE3o ou c\xF3digo...",style:{width:190,padding:"6px 10px",borderRadius:6,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(20,24,28,0.9)",color:"#f4efe6",fontSize:12,outline:"none"}}),React.createElement("select",{value:U,onChange:o=>{ye(o.target.value),o.target.value&&O("")},style:{width:150,padding:"6px 10px",borderRadius:6,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(20,24,28,0.9)",color:"#f4efe6",fontSize:12,outline:"none"}},React.createElement("option",{value:""},"Filtrar por cliente..."),ot.map(o=>React.createElement("option",{key:o,value:o},o))),(L.trim()||U)&&React.createElement("button",{onClick:()=>{O(""),ye("")},style:{padding:"6px 10px",borderRadius:6,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.06)",color:"#a8a29a",fontSize:12,cursor:"pointer"}},"Limpar")),Ce&&React.createElement("div",{style:{marginTop:6,maxHeight:280,overflowY:"auto",background:"rgba(17,20,23,0.97)",borderRadius:6,border:"1px solid rgba(255,255,255,0.1)",width:320}},React.createElement("div",{style:{padding:"6px 10px",fontSize:11,color:"#8ecff5",borderBottom:"1px solid rgba(255,255,255,0.08)"}},Ce," \u2014 ",w.length," ",w.length===1?"posi\xE7\xE3o":"posi\xE7\xF5es",le.length>0&&React.createElement(React.Fragment,null," em ",le.length," ",le.length===1?"rua":"ruas"," (",le.join(", "),")")),w.length===0&&React.createElement("div",{style:{padding:8,fontSize:12,color:"#a8a29a"}},"Nenhum resultado"),ve.map(o=>React.createElement("div",{key:o.pos,onClick:()=>nt(o),style:{padding:"6px 10px",fontSize:12,color:"#f4efe6",cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,0.06)"}},React.createElement("strong",{style:{color:"#e8a13a"}},o.pos)," \u2014 rua ",o.rua," \xB7 ",o.itens.length," ",o.itens.length===1?"item":"itens",o.alerta&&React.createElement("span",{style:{color:"#ff8a80"}}," \u26A0"))),w.length>ve.length&&React.createElement("div",{style:{padding:"6px 10px",fontSize:11,color:"#6b6f74"}},"+ ",w.length-ve.length," posi\xE7\xF5es (refine a busca para ver todas)"))),React.createElement("div",{style:{pointerEvents:"auto",display:"flex",gap:6}},React.createElement("button",{onClick:at,style:{background:"rgba(255,255,255,0.08)",color:"#f4efe6",border:"none",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}},"\u{1F3E0} Vis\xE3o geral"),[["orbit","\u{1F5B1}\uFE0F \xD3rbita"],["walk","\u{1F6B6} Andar"]].map(([o,i])=>React.createElement("button",{key:o,onClick:()=>f(o),style:{background:H===o?"#2a6f77":"rgba(255,255,255,0.08)",color:"#f4efe6",border:"none",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}},i)))),React.createElement("div",{style:{position:"absolute",top:118,left:20,right:20,zIndex:9,pointerEvents:"auto",display:"flex",gap:4,overflowX:"auto",padding:"4px 0"}},V.ruas.map(o=>React.createElement("button",{key:o,onClick:()=>rt(o),style:{flex:"0 0 auto",padding:"4px 10px",borderRadius:14,fontSize:11,fontWeight:600,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(20,24,28,0.75)",color:"#e8a13a",cursor:"pointer"}},o))),React.createElement("div",{style:{position:"absolute",bottom:16,left:20,zIndex:10,background:"rgba(20,24,28,0.85)",padding:"10px 14px",borderRadius:8,fontSize:11,color:"#a8a29a",pointerEvents:"none",maxWidth:320}},React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:4}},React.createElement("span",null,"Giro r\xE1pido"),React.createElement("div",{style:{width:90,height:8,borderRadius:4,background:"linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)"}}),React.createElement("span",null,"Parado h\xE1 muito tempo")),React.createElement("div",null,"Contorno vermelho pulsante = item vencido ou danificado na posi\xE7\xE3o"),React.createElement("div",{style:{marginTop:6,opacity:.8}},H==="orbit"?"\xD3rbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco":"Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")),React.createElement("div",{ref:d,style:{width:"100%",height:"100%",cursor:H==="walk"?"crosshair":"grab"}}),H==="walk"&&React.createElement("div",{style:{position:"absolute",bottom:24,right:24,zIndex:10,pointerEvents:"auto"}},React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(3, 52px)",gridTemplateRows:"repeat(2, 52px)",gap:6,justifyItems:"center"}},React.createElement("div",null),React.createElement("button",{style:$,...Q("KeyW")},"\u25B2"),React.createElement("div",null),React.createElement("button",{style:$,...Q("KeyA")},"\u25C0"),React.createElement("button",{style:$,...Q("KeyS")},"\u25BC"),React.createElement("button",{style:$,...Q("KeyD")},"\u25B6")),React.createElement("button",{style:{...$,width:"100%",borderRadius:10,marginTop:8,fontSize:12},...Q("run")},"\u{1F3C3} Correr")),React.createElement(DetailPanel,{selected:C,onClose:()=>J(null)}))}const root=ReactDOM.createRoot(document.getElementById("root"));root.render(React.createElement(Armazem3D,null));
+const { useEffect, useRef, useState, useMemo, useCallback } = React;
+const h = React.createElement;
 
+/* =========================================================================
+   CONSTANTES DE LAYOUT
+   ========================================================================= */
+const COL_SPACING   = 1.35;   // largura de cada posição (coluna) no eixo Z
+const LEVEL_HEIGHT  = 1.9;    // altura de cada nível
+const RACK_DEPTH    = 1.15;   // profundidade da estrutura da estante
+const AISLE_WIDTH   = 3.4;    // largura do corredor entre duas ruas
+const CORRIDOR_GAP  = 2.6;    // espaço entre corredores
+const BASE_LEVEL_Y  = 0.15;
+const BEAM_THICK    = 0.08;
+const POST_SIZE     = 0.12;
+const BLOCK_GAP     = 18;     // espaço entre o galpão principal e o bloco fictício
+const COLUMN_TAG_STEP = 5;    // a cada quantas colunas colocar uma plaquinha numerada
+
+const ITEM_FIELDS = ["cliente","codigo","desc","qtde","lote","validade","vencido","perecivel","danificado","giroScore"];
+function itemToObj(arr){ const o = {}; ITEM_FIELDS.forEach((k,i)=>o[k]=arr[i]); return o; }
+
+/* =========================================================================
+   COR POR GIRO (velocidade de movimentação do estoque)
+   ========================================================================= */
+function giroColor(g){
+  const fast = new THREE.Color(0x2e8b57);
+  const mid  = new THREE.Color(0xe8a13a);
+  const slow = new THREE.Color(0xc0392b);
+  const out  = new THREE.Color();
+  return g < 0.5 ? out.copy(fast).lerp(mid, g*2) : out.copy(mid).lerp(slow, (g-0.5)*2);
+}
+const COLOR_VENCIDO_DANIFICADO = new THREE.Color(0xe63946);
+const COLOR_CLIENTE_DESTAQUE   = new THREE.Color(0x8ecff5);
+const COLOR_VAZIO              = new THREE.Color(0x4fd1c5);
+const COLOR_HOVER              = new THREE.Color(0xffffff);
+const COLOR_SELECT             = new THREE.Color(0x2e6f77);
+
+/* =========================================================================
+   CLASSIFICAÇÃO: posições reais do galpão x posições fictícias/irregulares
+   Regra: uma rua é considerada fictícia quando (a) o nome não é composto só
+   por letras (ex.: "17") ou (b) sua maior coluna é muito menor que a mediana
+   das demais ruas (ex.: "PI", que só vai até a coluna 12 enquanto o padrão
+   do galpão vai até ~73/74). Além disso, posições isoladas cuja coluna foge
+   muito do padrão dentro de uma rua real (ex.: "T.878.1") são destacadas
+   como "extravio" e também vão para o bloco fictício.
+   ========================================================================= */
+function classifyEstoque(data){
+  const byRua = new Map();
+  data.forEach(pos=>{
+    if(!byRua.has(pos.rua)) byRua.set(pos.rua, []);
+    byRua.get(pos.rua).push(pos);
+  });
+  const ruaNames = Array.from(byRua.keys());
+  const maxCols  = ruaNames.map(r => Math.max(...byRua.get(r).map(p=>p.col)));
+  const sortedMaxCols = [...maxCols].sort((a,b)=>a-b);
+  const median = sortedMaxCols[Math.floor(sortedMaxCols.length/2)] || 1;
+  const smallRuaThreshold   = median * 0.5;
+  const outlierColThreshold = median * 2.5;
+
+  const realNames = [], ficticiaNames = [];
+  ruaNames.forEach(name=>{
+    const maxCol = Math.max(...byRua.get(name).map(p=>p.col));
+    const lettersOnly = /^[A-Z]+$/.test(name);
+    if(!lettersOnly || maxCol < smallRuaThreshold) ficticiaNames.push(name);
+    else realNames.push(name);
+  });
+  const ficticiaSet = new Set(ficticiaNames);
+
+  const realPositions = [], ficticiaPositions = [], outlierPositions = [];
+  data.forEach(pos=>{
+    if(ficticiaSet.has(pos.rua)) ficticiaPositions.push(pos);
+    else if(pos.col > outlierColThreshold) outlierPositions.push(pos);
+    else realPositions.push(pos);
+  });
+
+  // reindexa as posições "extraviadas" numa rua sintética própria, dentro
+  // de uma faixa de coluna sensata, preservando a posição original para exibição
+  const extraviadas = outlierPositions.map((p,i)=>({
+    ...p, origPos: p.pos, rua: "EXTRAVIO", col: i+1, niv: 1
+  }));
+
+  const sortRuaNames = arr => [...arr].sort((a,b)=> a.length - b.length || (a<b?-1:a>b?1:0));
+
+  return {
+    realRuas: sortRuaNames(realNames),
+    ficticiaRuas: sortRuaNames(ficticiaNames).concat(extraviadas.length ? ["EXTRAVIO"] : []),
+    realPositions,
+    ficticiaPositions: ficticiaPositions.concat(extraviadas)
+  };
+}
+
+/* =========================================================================
+   MONTAGEM DOS CORREDORES (par esquerda/direita)
+   A primeira rua da sequência ocupa somente o lado direito do primeiro
+   corredor (ex.: rua "A" só tem lado direito), depois seguem pares normais.
+   ========================================================================= */
+function buildCorridors(orderedRuas){
+  const corridors = [];
+  if(!orderedRuas.length) return corridors;
+  corridors.push({ left: null, right: orderedRuas[0] });
+  for(let i=1; i<orderedRuas.length; i+=2){
+    corridors.push({ left: orderedRuas[i], right: orderedRuas[i+1] !== undefined ? orderedRuas[i+1] : null });
+  }
+  return corridors;
+}
+
+function buildBlockLayout(orderedRuas, positions, originX){
+  const corridors = buildCorridors(orderedRuas);
+  const maxColByRua = {}, maxLevelByRua = {};
+  positions.forEach(p=>{
+    maxColByRua[p.rua]   = Math.max(maxColByRua[p.rua]   || 0, p.col);
+    maxLevelByRua[p.rua] = Math.max(maxLevelByRua[p.rua] || 0, p.niv);
+  });
+  const corridorSpanX = AISLE_WIDTH + RACK_DEPTH*2 + CORRIDOR_GAP;
+  const ruaX = {};
+  corridors.forEach((c,i)=>{
+    const centerX = originX + i*corridorSpanX;
+    if(c.left)  ruaX[c.left]  = centerX - AISLE_WIDTH/2 - RACK_DEPTH/2;
+    if(c.right) ruaX[c.right] = centerX + AISLE_WIDTH/2 + RACK_DEPTH/2;
+  });
+  const maxColOverall = Math.max(1, ...orderedRuas.map(r=>maxColByRua[r]||0));
+  const totalWidth = corridors.length * corridorSpanX;
+  const totalDepth = maxColOverall * COL_SPACING;
+  return { ruas: orderedRuas, corridors, ruaX, maxColByRua, maxLevelByRua,
+           corridorSpanX, totalWidth, totalDepth, maxColOverall, originX, positions };
+}
+
+// Posições vazias: para cada rua do bloco, gera as combinações col x nível
+// que aparecem na grade mas não têm registro de item no estoque.json.
+// (aproximação: assume grade cheia col x nível por rua, já que o arquivo só lista posições ocupadas)
+function computeEmptySlots(layout){
+  // usa (rua,col,niv) em vez da string "pos" para não ser enganado por
+  // pequenas inconsistências de formatação no arquivo de origem (ex.: "PI.08.1" vs "PI.08.01")
+  const occupied = new Set(layout.positions.map(p=>p.rua+"|"+p.col+"|"+p.niv));
+  const empties = [];
+  layout.ruas.forEach(rua=>{
+    const maxCol = layout.maxColByRua[rua] || 0;
+    const maxNiv = layout.maxLevelByRua[rua] || 0;
+    for(let col=1; col<=maxCol; col++){
+      for(let niv=1; niv<=maxNiv; niv++){
+        if(!occupied.has(rua+"|"+col+"|"+niv)){
+          const pos = rua + "." + String(col).padStart(2,"0") + "." + niv;
+          empties.push({ pos, rua, col, niv });
+        }
+      }
+    }
+  });
+  return empties;
+}
+
+/* =========================================================================
+   PAINEL DE DETALHES DE UMA POSIÇÃO
+   ========================================================================= */
+function DetailPanel({ selected, onClose }){
+  if(!selected) return null;
+  const itens = selected.itens.map(itemToObj);
+  return h("div", {
+    style: { position:"absolute", top:0, right:0, width:360, maxWidth:"90vw", height:"100%",
+      background:"rgba(17,20,23,0.97)", color:"#f4efe6", padding:"20px 18px", overflowY:"auto",
+      boxShadow:"-8px 0 24px rgba(0,0,0,0.4)", fontFamily:"'Inter', system-ui, sans-serif",
+      borderLeft:"1px solid rgba(232,161,58,0.25)", zIndex:20 } },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 } },
+      h("h2", { style:{ margin:0, fontSize:20, fontFamily:"'JetBrains Mono', monospace", color:"#e8a13a" } }, selected.pos),
+      h("button", { onClick:onClose, style:{ background:"none", border:"none", color:"#a8a29a", fontSize:22, cursor:"pointer", lineHeight:1 } }, "\xD7")
+    ),
+    selected.origPos && h("p", { style:{ margin:"0 0 4px", fontSize:11, color:"#ff8a80" } },
+      "\u26A0 Posição fora do padrão do galpão — original: ", selected.origPos),
+    h("p", { style:{ margin:"2px 0 6px", fontSize:12, color:"#a8a29a" } },
+      "Rua ", selected.rua, " \xB7 Coluna ", selected.col, " \xB7 Nível ", selected.niv, " \u2014 ",
+      itens.length, " ", itens.length===1 ? "lote/SKU" : "lotes/SKUs"),
+    selected.alerta && h("div", { style:{ background:"rgba(192,57,43,0.18)", border:"1px solid rgba(192,57,43,0.5)",
+      borderRadius:6, padding:"6px 10px", fontSize:11, color:"#ff8a80", marginBottom:10 } },
+      "\u26A0 Posição contém item vencido ou danificado"),
+    itens.map((it,idx)=> h("div", { key:idx, style:{
+        borderTop: idx===0 ? "1px solid rgba(255,255,255,0.08)" : "none",
+        borderBottom:"1px solid rgba(255,255,255,0.08)", padding:"10px 0", fontSize:13 } },
+      h("div", { style:{ display:"flex", justifyContent:"space-between", marginBottom:4, alignItems:"center" } },
+        h("span", { style:{ background:"#3a4550", color:"#f4efe6", fontWeight:700, fontSize:11, padding:"1px 6px", borderRadius:4 } }, it.cliente),
+        h("span", { style:{ color:"#a8a29a", fontFamily:"'JetBrains Mono', monospace", fontSize:11 } }, it.codigo)
+      ),
+      h("div", { style:{ marginBottom:4, lineHeight:1.35 } }, it.desc),
+      h("div", { style:{ display:"flex", gap:12, flexWrap:"wrap", color:"#a8a29a", fontSize:11, marginBottom:4 } },
+        h("span", null, "Qtd: ", h("strong", { style:{ color:"#f4efe6" } }, it.qtde)),
+        h("span", null, "Lote: ", it.lote || "\u2014"),
+        h("span", null, "Val: ", it.validade || "\u2014")
+      ),
+      h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+        it.vencido && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "VENCIDO"),
+        it.danificado && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "DANIFICADO"),
+        it.perecivel && h("span", { style:{ fontSize:10, background:"rgba(41,128,185,0.25)", color:"#8ecff5", padding:"1px 6px", borderRadius:4 } }, "PERECÍVEL")
+      )
+    ))
+  );
+}
+
+/* =========================================================================
+   COMPONENTE PRINCIPAL
+   ========================================================================= */
+function Armazem3D(){
+  const mountRef = useRef(null);
+  const api = useRef({}); // "ponte" entre React e a cena Three.js
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [viewMode, setViewMode] = useState("orbit"); // "orbit" | "walk"
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+
+  // modo único de visualização: busca livre, cliente, vencidos, danificados ou vazios
+  const [mode, setMode] = useState({ type:"none" });
+  const [searchText, setSearchText] = useState("");
+
+  useEffect(()=>{
+    let cancelled = false;
+    async function load(){
+      try{
+        const res = await fetch("./estoque.json");
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        const len = res.headers.get("Content-Length");
+        const total = len ? parseInt(len,10) : 0;
+        if(!res.body || !total){
+          const json = await res.json();
+          if(!cancelled) setData(json);
+          return;
+        }
+        const reader = res.body.getReader();
+        let received = 0;
+        const chunks = [];
+        for(;;){
+          const { done, value } = await reader.read();
+          if(done) break;
+          chunks.push(value);
+          received += value.length;
+          if(!cancelled) setProgress(Math.min(99, Math.round(received/total*100)));
+        }
+        const text = await new Blob(chunks).text();
+        const json = JSON.parse(text);
+        if(!cancelled){ setProgress(100); setData(json); }
+      }catch(e){
+        if(!cancelled) setError(e.message);
+      }
+    }
+    load();
+    return ()=>{ cancelled = true; };
+  },[]);
+
+  const classified = useMemo(()=> data ? classifyEstoque(data) : null, [data]);
+
+  const mainLayout = useMemo(()=>{
+    if(!classified) return null;
+    return buildBlockLayout(classified.realRuas, classified.realPositions, 0);
+  }, [classified]);
+
+  const ficticiaLayout = useMemo(()=>{
+    if(!classified || !classified.ficticiaRuas.length) return null;
+    const originX = mainLayout ? mainLayout.totalWidth + BLOCK_GAP : 0;
+    return buildBlockLayout(classified.ficticiaRuas, classified.ficticiaPositions, originX);
+  }, [classified, mainLayout]);
+
+  const totalItens = useMemo(()=> data ? data.reduce((acc,p)=>acc+p.itens.length,0) : 0, [data]);
+  const totalAlertas = useMemo(()=> data ? data.filter(p=>p.alerta).length : 0, [data]);
+  const clientes = useMemo(()=>{
+    if(!data) return [];
+    const set = new Set();
+    data.forEach(p=>p.itens.forEach(it=>{ if(it[0]) set.add(it[0]); }));
+    return Array.from(set).sort();
+  }, [data]);
+
+  // lista de resultados quando o modo é "busca"
+  const searchResults = useMemo(()=>{
+    if(!data || mode.type!=="busca" || !mode.value) return [];
+    const q = mode.value.toUpperCase();
+    return data.filter(p =>
+      p.pos.toUpperCase().includes(q) ||
+      p.itens.some(it => (it[0]||"").toUpperCase().includes(q) || (it[1]||"").toUpperCase().includes(q) || (it[2]||"").toUpperCase().includes(q))
+    );
+  }, [data, mode]);
+  const searchResultsShown = useMemo(()=> searchResults.slice(0,40), [searchResults]);
+
+  const modeLabel = mode.type==="cliente" ? "Cliente: " + mode.value
+    : mode.type==="busca" ? "Busca: \"" + mode.value + "\""
+    : mode.type==="vencido" ? "Mostrando apenas posições com item VENCIDO"
+    : mode.type==="danificado" ? "Mostrando apenas posições com item DANIFICADO"
+    : mode.type==="vazio" ? "Destacando posições vazias"
+    : null;
+
+  // avisa a cena Three.js sempre que o modo de visualização mudar
+  useEffect(()=>{
+    api.current.applyMode && api.current.applyMode(mode);
+  }, [mode]);
+
+  useEffect(()=>{
+    api.current.setSelectedByPos && api.current.setSelectedByPos(selected ? selected.pos : null);
+  }, [selected]);
+
+  useEffect(()=>{
+    api.current.onModeChange && api.current.onModeChange(viewMode);
+  }, [viewMode]);
+
+  const focusPosition = useCallback((pos)=>{
+    setSelected(pos);
+    api.current.focusCamera && api.current.focusCamera(pos);
+  }, []);
+  const jumpToRua = useCallback((rua)=>{
+    api.current.jumpToRua && api.current.jumpToRua(rua);
+  }, []);
+  const jumpToFicticio = useCallback(()=>{
+    api.current.jumpToFicticio && api.current.jumpToFicticio();
+  }, []);
+  const resetView = useCallback(()=>{
+    api.current.resetView && api.current.resetView();
+  }, []);
+
+  const toggleMode = useCallback((type)=>{
+    setSearchText("");
+    setMode(prev => prev.type===type ? { type:"none" } : { type });
+  }, []);
+  const onSearchChange = useCallback((val)=>{
+    setSearchText(val);
+    setMode(val.trim() ? { type:"busca", value: val.trim() } : { type:"none" });
+  }, []);
+  const onClienteChange = useCallback((val)=>{
+    setSearchText("");
+    setMode(val ? { type:"cliente", value: val } : { type:"none" });
+  }, []);
+
+  /* =======================================================================
+     EFEITO PRINCIPAL: monta a cena Three.js (executa uma vez que os dados
+     e os layouts estão prontos)
+     ======================================================================= */
+  useEffect(()=>{
+    if(!data || !mainLayout) return;
+    const mount = mountRef.current;
+    const width = mount.clientWidth, height = mount.clientHeight;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1013);
+    const totalWidthAll = mainLayout.totalWidth + (ficticiaLayout ? BLOCK_GAP + ficticiaLayout.totalWidth : 0);
+    const totalDepthAll = Math.max(mainLayout.totalDepth, ficticiaLayout ? ficticiaLayout.totalDepth : 0);
+    scene.fog = new THREE.Fog(0x0d1013, 30, 130);
+
+    const centerX = mainLayout.totalWidth/2 - mainLayout.corridorSpanX/2;
+    const centerZ = mainLayout.totalDepth/2;
+    const maxOrbitRadius = Math.max(totalWidthAll, totalDepthAll) * 1.3 + 30;
+    const initialColSort = mainLayout.ruas.map(r=>mainLayout.maxColByRua[r]||0).sort((a,b)=>a-b);
+    const typicalDepth = (initialColSort[Math.floor(initialColSort.length/2)] || 1) * COL_SPACING;
+    const initialRadius = Math.min(maxOrbitRadius, Math.max(mainLayout.totalWidth, typicalDepth)*0.55 + 14);
+
+    const camera = new THREE.PerspectiveCamera(55, width/height, 0.1, 600);
+    const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:"high-performance" });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.5));
+    mount.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    const dirLight = new THREE.DirectionalLight(0xffdba0, 1.05);
+    dirLight.position.set(centerX+25, 35, centerZ+18);
+    scene.add(dirLight);
+    scene.add(new THREE.HemisphereLight(0x88aaea, 0x1a175a, 0.45));
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(totalWidthAll+30, totalDepthAll+30),
+      new THREE.MeshStandardMaterial({ color:0x222b2b, roughness:0.95 })
+    );
+    floor.rotation.x = -Math.PI/2;
+    floor.position.set(centerX + (ficticiaLayout? (ficticiaLayout.totalWidth+BLOCK_GAP)/2 : 0), 0, centerZ);
+    scene.add(floor);
+
+    const postMat = new THREE.MeshStandardMaterial({ color:0x22588a, roughness:0.4, metalness:0.6 });
+    const beamMat = new THREE.MeshStandardMaterial({ color:0xdc6d51, roughness:0.4, metalness:0.5 });
+    const ficticioPostMat = new THREE.MeshStandardMaterial({ color:0x6a4b8a, roughness:0.4, metalness:0.6 });
+    const ficticioBeamMat = new THREE.MeshStandardMaterial({ color:0x8a5a5a, roughness:0.4, metalness:0.5 });
+
+    const aisleHighlightMat = new THREE.MeshStandardMaterial({ color:0xc9be87, roughness:0.85, transparent:true, opacity:0.28 });
+
+    // texturas de rótulo reaproveitadas (mesma string = mesma textura)
+    const labelTextureCache = new Map();
+    function getLabelTexture(text, opts){
+      opts = opts || {};
+      const key = text + "|" + (opts.big?1:0) + "|" + (opts.color||"");
+      if(labelTextureCache.has(key)) return labelTextureCache.get(key);
+      const canvas = document.createElement("canvas");
+      canvas.width = opts.big ? 160 : 96;
+      canvas.height = opts.big ? 72 : 48;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = opts.color || "#f4efe6";
+      ctx.font = "bold " + (opts.big ? 46 : 30) + "px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, canvas.width/2, canvas.height/2);
+      const tex = new THREE.CanvasTexture(canvas);
+      labelTextureCache.set(key, tex);
+      return tex;
+    }
+    function addLabelSprite(text, x, y, z, opts){
+      opts = opts || {};
+      const tex = getLabelTexture(text, opts);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent:true }));
+      sprite.position.set(x,y,z);
+      sprite.scale.set(opts.big ? 1.8 : 0.85, opts.big ? 0.9 : 0.42, 1);
+      scene.add(sprite);
+      return sprite;
+    }
+
+    // ---------------------------------------------------------------------
+    // Constrói estrutura física (postes, vigas, rótulos) de um bloco de ruas
+    // ---------------------------------------------------------------------
+    function buildRackStructure(layout, opts){
+      opts = opts || {};
+      const pMat = opts.ficticio ? ficticioPostMat : postMat;
+      const bMat = opts.ficticio ? ficticioBeamMat : beamMat;
+
+      let postCount = 0, beamCount = 0;
+      layout.ruas.forEach(rua=>{
+        postCount += ((layout.maxColByRua[rua]||0)+1) * 2;
+        beamCount += ((layout.maxLevelByRua[rua]||0)+1) * 2;
+      });
+      const dummy = new THREE.Object3D();
+      const postGeo = new THREE.BoxGeometry(POST_SIZE, 1, POST_SIZE);
+      const posts = new THREE.InstancedMesh(postGeo, pMat, Math.max(1, postCount));
+      const beamGeo = new THREE.BoxGeometry(BEAM_THICK, BEAM_THICK, 1);
+      const beams = new THREE.InstancedMesh(beamGeo, bMat, Math.max(1, beamCount));
+      let pi = 0, bi = 0;
+
+      layout.corridors.forEach((c,ci)=>{
+        const cx = layout.originX + ci*layout.corridorSpanX;
+        const highlight = new THREE.Mesh(new THREE.PlaneGeometry(AISLE_WIDTH*0.94, layout.totalDepth), aisleHighlightMat);
+        highlight.rotation.x = -Math.PI/2;
+        highlight.position.set(cx, 0.01, layout.totalDepth/2);
+        scene.add(highlight);
+      });
+
+      layout.ruas.forEach(rua=>{
+        const x = layout.ruaX[rua];
+        if(x === undefined) return;
+        const maxCol = layout.maxColByRua[rua] || 0;
+        const maxNiv = layout.maxLevelByRua[rua] || 0;
+        const rackTopY = maxNiv*LEVEL_HEIGHT + BASE_LEVEL_Y + 0.3;
+        const rackDepthZ = maxCol*COL_SPACING;
+
+        for(let k=0; k<=maxCol; k++){
+          const z = k*COL_SPACING;
+          [-RACK_DEPTH/2, RACK_DEPTH/2].forEach(offset=>{
+            dummy.position.set(x+offset, rackTopY/2, z);
+            dummy.scale.set(1, rackTopY, 1);
+            dummy.updateMatrix();
+            posts.setMatrixAt(pi++, dummy.matrix);
+          });
+        }
+        for(let k=0; k<=maxNiv; k++){
+          const y = BASE_LEVEL_Y + k*LEVEL_HEIGHT;
+          [-RACK_DEPTH/2, RACK_DEPTH/2].forEach(offset=>{
+            dummy.position.set(x+offset, y, rackDepthZ/2);
+            dummy.scale.set(1, 1, rackDepthZ+0.3);
+            dummy.updateMatrix();
+            beams.setMatrixAt(bi++, dummy.matrix);
+          });
+        }
+
+        // plaquinha da rua, sempre no início da sequência (antes da coluna 1)
+        addLabelSprite(rua, x, rackTopY+0.7, -1.4, { big:true, color: opts.ficticio ? "#d9a4ff" : "#f4efe6" });
+
+        // plaquinhas numeradas ao longo da coluna, no início de cada posição
+        if(!opts.ficticio){
+          for(let col=1; col<=maxCol; col+=COLUMN_TAG_STEP){
+            const zStart = (col-1)*COL_SPACING;
+            addLabelSprite(String(col).padStart(2,"0"), x, 0.28, zStart+0.05, { color:"#c9a24a" });
+          }
+        }
+      });
+
+      posts.instanceMatrix.needsUpdate = true;
+      beams.instanceMatrix.needsUpdate = true;
+      scene.add(posts);
+      scene.add(beams);
+    }
+
+    buildRackStructure(mainLayout, { ficticio:false });
+    if(ficticiaLayout){
+      buildRackStructure(ficticiaLayout, { ficticio:true });
+      // divisória/placa entre o galpão e o bloco fictício
+      addLabelSprite("\u26A0 BLOCO FICTÍCIO / IRREGULAR", ficticiaLayout.originX - BLOCK_GAP/2, 4.2, ficticiaLayout.totalDepth/2, { big:true, color:"#d9a4ff" });
+    }
+
+    // ---------------------------------------------------------------------
+    // Camada de caixas ocupadas (uma InstancedMesh por bloco)
+    // Cada caixa fica centralizada DENTRO da célula da posição (correção do
+    // bug em que o material ficava a cavaleiro entre duas posições).
+    // ---------------------------------------------------------------------
+    function buildBoxLayer(layout){
+      const positions = layout.positions.filter(p => layout.ruaX[p.rua] !== undefined);
+      const geo = new THREE.BoxGeometry(1,1,1);
+      const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.5, metalness:0.1, transparent:true, opacity:1 });
+      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, positions.length));
+      mesh.frustumCulled = false;
+
+      const entries = positions.map((p,i)=>{
+        const x = layout.ruaX[p.rua];
+        const zCenter = (p.col - 0.5) * COL_SPACING; // <-- correção: centro da célula, não a divisa
+        const itemCount = p.itens.length;
+        const boxSizeX = RACK_DEPTH*0.72;
+        const boxSizeZ = Math.min(COL_SPACING*0.82, boxSizeX*0.85);
+        const boxHeight = LEVEL_HEIGHT * (0.4 + Math.min(itemCount,10)*0.05);
+        const y = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + boxHeight/2 + 0.08;
+        return { data:p, index:i, x, y, z:zCenter, boxSizeX, boxSizeZ, boxHeight, baseColor: giroColor(p.giro) };
+      });
+
+      const dummy = new THREE.Object3D();
+      function writeMatrix(entry, scaleMul){
+        dummy.position.set(entry.x, entry.y, entry.z);
+        dummy.scale.set(entry.boxSizeX*scaleMul, entry.boxHeight*scaleMul, entry.boxSizeZ*scaleMul);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(entry.index, dummy.matrix);
+      }
+      entries.forEach(e=>{
+        writeMatrix(e, 1);
+        mesh.setColorAt(e.index, e.baseColor);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      scene.add(mesh);
+
+      const posIndex = new Map();
+      entries.forEach(e=>posIndex.set(e.data.pos, e));
+      return { mesh, entries, posIndex, writeMatrix };
+    }
+
+    const mainBoxes = buildBoxLayer(mainLayout);
+    const ficticiaBoxes = ficticiaLayout ? buildBoxLayer(ficticiaLayout) : null;
+    const allBoxLayers = ficticiaBoxes ? [mainBoxes, ficticiaBoxes] : [mainBoxes];
+    const combinedPosIndex = new Map();
+    allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
+
+    // contorno pulsante para posições com alerta (vencido/danificado)
+    const alertMeshes = [];
+    allBoxLayers.forEach(layer=>{
+      layer.entries.forEach(e=>{
+        if(!e.data.alerta) return;
+        const g = new THREE.BoxGeometry(e.boxSizeX*1.18, e.boxHeight*1.18, e.boxSizeZ*1.18);
+        const m = new THREE.MeshBasicMaterial({ color:0xff5544, transparent:true, opacity:0.5, wireframe:true });
+        const mesh = new THREE.Mesh(g, m);
+        mesh.position.set(e.x, e.y, e.z);
+        scene.add(mesh);
+        alertMeshes.push(mesh);
+      });
+    });
+
+    // ---------------------------------------------------------------------
+    // Camada de posições vazias (somente galpão principal)
+    // ---------------------------------------------------------------------
+    const emptySlots = computeEmptySlots(mainLayout);
+    const emptyGeo = new THREE.BoxGeometry(1,1,1);
+    const emptyMat = new THREE.MeshBasicMaterial({ color: COLOR_VAZIO, transparent:true, opacity:0.35, wireframe:false });
+    const emptyMesh = new THREE.InstancedMesh(emptyGeo, emptyMat, Math.max(1, emptySlots.length));
+    emptyMesh.visible = false;
+    (function(){
+      const dummy = new THREE.Object3D();
+      emptySlots.forEach((slot, i)=>{
+        const x = mainLayout.ruaX[slot.rua];
+        if(x === undefined) return;
+        const z = (slot.col - 0.5) * COL_SPACING;
+        const y = BASE_LEVEL_Y + (slot.niv-1)*LEVEL_HEIGHT + (LEVEL_HEIGHT*0.35)/2 + 0.08;
+        dummy.position.set(x, y, z);
+        dummy.scale.set(RACK_DEPTH*0.6, LEVEL_HEIGHT*0.35, COL_SPACING*0.7);
+        dummy.updateMatrix();
+        emptyMesh.setMatrixAt(i, dummy.matrix);
+      });
+      emptyMesh.instanceMatrix.needsUpdate = true;
+    })();
+    scene.add(emptyMesh);
+
+    /* ---------------------------------------------------------------------
+       Estado de interação (hover / seleção / modo de visualização)
+       --------------------------------------------------------------------- */
+    let hoveredEntry = null, selectedEntry = null;
+    let currentModeType = "none", currentModeValue = null;
+
+    function entryMatchesMode(entry){
+      if(currentModeType === "none" || currentModeType === "busca") return true;
+      const itens = entry.data.itens;
+      if(currentModeType === "vencido")     return itens.some(it => it[6] === true);
+      if(currentModeType === "danificado")  return itens.some(it => it[8] === true);
+      if(currentModeType === "cliente")     return itens.some(it => it[0] === currentModeValue);
+      return true;
+    }
+    function entryHighlightColor(entry){
+      if(currentModeType === "vencido" || currentModeType === "danificado") return COLOR_VENCIDO_DANIFICADO;
+      if(currentModeType === "cliente") return entry.baseColor.clone().lerp(COLOR_CLIENTE_DESTAQUE, 0.55);
+      return entry.baseColor;
+    }
+    function refreshEntryVisual(layer, entry){
+      const isFiltering = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="cliente";
+      const visible = !isFiltering || entryMatchesMode(entry);
+      const scaleMul = visible ? (entry===hoveredEntry || entry===selectedEntry ? 1.14 : 1) : 0;
+      layer.writeMatrix(entry, scaleMul);
+      const baseColor = visible ? entryHighlightColor(entry) : entry.baseColor;
+      let color = baseColor;
+      if(visible && entry===selectedEntry) color = baseColor.clone().lerp(COLOR_SELECT, 0.45);
+      else if(visible && entry===hoveredEntry) color = baseColor.clone().lerp(COLOR_HOVER, 0.4);
+      layer.mesh.setColorAt(entry.index, color);
+    }
+    function refreshAllVisuals(){
+      allBoxLayers.forEach(layer=>{
+        layer.entries.forEach(e=>refreshEntryVisual(layer, e));
+        layer.mesh.instanceMatrix.needsUpdate = true;
+        if(layer.mesh.instanceColor) layer.mesh.instanceColor.needsUpdate = true;
+      });
+    }
+    refreshAllVisuals();
+
+    // destaque de busca livre (não oculta, só realça e escurece o resto)
+    function applyBuscaHighlight(matchSet){
+      allBoxLayers.forEach(layer=>{
+        layer.entries.forEach(e=>{
+          const isMatch = matchSet && matchSet.has(e.data.pos);
+          let color = e.baseColor;
+          if(matchSet){
+            color = isMatch ? e.baseColor.clone().lerp(COLOR_HOVER, 0.5) : e.baseColor.clone().lerp(new THREE.Color(0x1a1d20), 0.75);
+          }
+          if(e===selectedEntry) color = color.clone().lerp(COLOR_SELECT, 0.45);
+          layer.mesh.setColorAt(e.index, color);
+        });
+        layer.mesh.instanceColor && (layer.mesh.instanceColor.needsUpdate = true);
+      });
+    }
+
+    api.current.applyMode = (m)=>{
+      currentModeType = m.type;
+      currentModeValue = m.value || null;
+      emptyMesh.visible = (m.type === "vazio");
+      mainBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
+      if(ficticiaBoxes) ficticiaBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
+      if(m.type === "busca"){
+        refreshAllVisuals();
+        const q = m.value.toUpperCase();
+        const matchSet = new Set();
+        allBoxLayers.forEach(layer=>layer.entries.forEach(e=>{
+          const p = e.data;
+          const hit = p.pos.toUpperCase().includes(q) ||
+            p.itens.some(it => (it[0]||"").toUpperCase().includes(q) || (it[1]||"").toUpperCase().includes(q) || (it[2]||"").toUpperCase().includes(q));
+          if(hit) matchSet.add(p.pos);
+        }));
+        applyBuscaHighlight(matchSet);
+      } else {
+        refreshAllVisuals();
+      }
+    };
+
+    api.current.setSelectedByPos = (pos)=>{
+      const found = pos ? combinedPosIndex.get(pos) : null;
+      const newEntry = found ? found.entry : null;
+      if(newEntry === selectedEntry) return;
+      selectedEntry = newEntry;
+      refreshAllVisuals();
+      if(currentModeType === "busca") api.current.applyMode({ type:"busca", value: currentModeValue || "" });
+    };
+
+    /* ---------------------------------------------------------------------
+       Câmera: órbita e caminhada (andar)
+       --------------------------------------------------------------------- */
+    const initialX = mainLayout.ruaX[mainLayout.ruas[0]] !== undefined ? mainLayout.ruaX[mainLayout.ruas[0]] : centerX;
+    const orbitTarget = new THREE.Vector3(initialX, 1.7, Math.min(typicalDepth*0.35, mainLayout.totalDepth/2));
+    const spherical = new THREE.Spherical(initialRadius, Math.PI/3.1, Math.PI*0.22);
+
+    const walk = { x: centerX, z: mainLayout.totalDepth/2, yaw: 0, pitch: 0, y: 1.6 };
+    const keys = {};
+    api.current.setKey = (k,v)=>{ keys[k]=v; };
+
+    const clamp = (v,min,max)=>Math.max(min, Math.min(max, v));
+    const clampOrbitTarget = ()=>{
+      orbitTarget.x = clamp(orbitTarget.x, -40, totalWidthAll+40);
+      orbitTarget.z = clamp(orbitTarget.z, -40, totalDepthAll+40);
+    };
+    const clampWalk = ()=>{
+      walk.x = clamp(walk.x, -30, totalWidthAll+30);
+      walk.z = clamp(walk.z, -10, totalDepthAll+10);
+    };
+
+    // ponteiros (arraste / pinça)
+    const pointers = new Map();
+    let dragging = false, lastX=0, lastY=0, dragDistance=0;
+    let pinchStartDist=null, pinchStartMid=null, pinchStartTarget=null;
+    const dist2 = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
+    const mid2 = (a,b)=>({ x:(a.x+b.x)/2, y:(a.y+b.y)/2 });
+
+    const onPointerDown = (e)=>{
+      pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+      if(pointers.size===1){ dragging=true; lastX=e.clientX; lastY=e.clientY; dragDistance=0; }
+      else if(pointers.size===2){
+        dragging=false;
+        const pts = Array.from(pointers.values());
+        pinchStartDist = dist2(pts[0], pts[1]);
+        pinchStartMid = mid2(pts[0], pts[1]);
+        pinchStartTarget = orbitTarget.clone();
+      }
+    };
+    const onPointerUp = (e)=>{
+      pointers.delete(e.pointerId);
+      if(pointers.size<2){ pinchStartDist=null; pinchStartMid=null; }
+      if(pointers.size===0) dragging=false;
+      else if(pointers.size===1){ const p=Array.from(pointers.values())[0]; dragging=true; lastX=p.x; lastY=p.y; }
+    };
+    const onPointerMove = (e)=>{
+      if(pointers.has(e.pointerId)) pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+      if(pointers.size>=2 && viewModeRef.current==="orbit"){
+        const pts = Array.from(pointers.values());
+        const d = dist2(pts[0], pts[1]);
+        const mid = mid2(pts[0], pts[1]);
+        if(pinchStartDist!=null){ spherical.radius = clamp(spherical.radius + (pinchStartDist-d)*0.025, 4, maxOrbitRadius); pinchStartDist = d; }
+        if(pinchStartMid && pinchStartTarget){
+          const dx = mid.x - pinchStartMid.x, dy = mid.y - pinchStartMid.y;
+          const theta = spherical.theta;
+          const scale = spherical.radius*0.0028;
+          orbitTarget.x = pinchStartTarget.x - Math.cos(theta)*dx*scale + (-Math.sin(theta))*dy*scale;
+          orbitTarget.z = pinchStartTarget.z - (-Math.sin(theta))*dx*scale + (-Math.cos(theta))*dy*scale;
+          clampOrbitTarget();
+        }
+        return;
+      }
+      const dx = e.clientX-lastX, dy = e.clientY-lastY;
+      if(dragging){
+        dragDistance += Math.abs(dx)+Math.abs(dy);
+        if(viewModeRef.current==="orbit"){
+          spherical.theta -= dx*0.006;
+          spherical.phi = clamp(spherical.phi + dy*0.006, 0.15, Math.PI/2.05);
+        } else {
+          walk.yaw -= dx*0.004;
+          walk.pitch = clamp(walk.pitch - dy*0.004, -1.1, 1.1);
+        }
+      }
+      lastX = e.clientX; lastY = e.clientY;
+    };
+    const onWheel = (e)=>{
+      e.preventDefault();
+      if(viewModeRef.current==="orbit") spherical.radius = clamp(spherical.radius + e.deltaY*0.02, 4, maxOrbitRadius);
+    };
+    const onKeyDown = (e)=>{ keys[e.code]=true; };
+    const onKeyUp   = (e)=>{ keys[e.code]=false; };
+
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive:false });
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    renderer.domElement.style.touchAction = "none";
+
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
+    const updatePointerNdc = (e)=>{
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerNdc.x = (e.clientX-rect.left)/rect.width*2-1;
+      pointerNdc.y = -((e.clientY-rect.top)/rect.height)*2+1;
+    };
+    renderer.domElement.addEventListener("mousemove", updatePointerNdc);
+
+    const onClick = ()=>{
+      if(dragDistance>6) return;
+      raycaster.setFromCamera(pointerNdc, camera);
+      const hits = raycaster.intersectObjects(allBoxLayers.map(l=>l.mesh));
+      if(hits.length>0){
+        const hitMesh = hits[0].object;
+        const layer = allBoxLayers.find(l=>l.mesh===hitMesh);
+        const entry = layer.entries[hits[0].instanceId];
+        if(!entryMatchesMode(entry) && (currentModeType==="vencido"||currentModeType==="danificado"||currentModeType==="cliente")) return;
+        setSelected(prev => (prev && prev.pos===entry.data.pos) ? null : entry.data);
+      }
+    };
+    renderer.domElement.addEventListener("click", onClick);
+
+    // foca a câmera numa posição específica (clique na lista de busca ou no bloco)
+    api.current.focusCamera = (pos)=>{
+      const layer = mainLayout.ruaX[pos.rua]!==undefined ? mainLayout : ficticiaLayout;
+      const x = layer.ruaX[pos.rua];
+      const z = (pos.col-0.5)*COL_SPACING;
+      const y = BASE_LEVEL_Y + (pos.niv-1)*LEVEL_HEIGHT + 1;
+      orbitTarget.set(x, y, z);
+      spherical.radius = 6; spherical.phi = Math.PI/4; spherical.theta = Math.PI/3;
+      setViewMode("orbit");
+    };
+
+    // pula para uma rua e centraliza a visão no MEIO das posições daquela rua
+    // (em vez de olhar para um ponto qualquer perto do início)
+    api.current.jumpToRua = (rua)=>{
+      const layer = mainLayout.ruaX[rua]!==undefined ? mainLayout : ficticiaLayout;
+      const x = layer.ruaX[rua];
+      if(x===undefined) return;
+      const maxCol = layer.maxColByRua[rua] || 1;
+      const midZ = (maxCol/2) * COL_SPACING;
+      orbitTarget.set(x, 1.7, midZ);
+      spherical.radius = clamp(maxCol*COL_SPACING*0.6 + 8, 8, maxOrbitRadius);
+      spherical.theta = Math.PI*0.18; spherical.phi = Math.PI/3;
+      setViewMode("orbit");
+    };
+
+    api.current.jumpToFicticio = ()=>{
+      if(!ficticiaLayout) return;
+      orbitTarget.set(ficticiaLayout.originX + ficticiaLayout.totalWidth/2 - ficticiaLayout.corridorSpanX/2, 1.7, ficticiaLayout.totalDepth/2);
+      spherical.radius = clamp(ficticiaLayout.totalWidth*0.7+10, 8, maxOrbitRadius);
+      spherical.theta = Math.PI*0.22; spherical.phi = Math.PI/3.1;
+      setViewMode("orbit");
+    };
+
+    api.current.resetView = ()=>{
+      orbitTarget.set(centerX, 1.7, centerZ);
+      spherical.radius = initialRadius; spherical.theta = Math.PI*0.22; spherical.phi = Math.PI/3.1;
+      setViewMode("orbit");
+    };
+
+    // Sempre que o modo "Andar" é ativado, a câmera passa a olhar para o
+    // MEIO da faixa de posições (não para um lugar aleatório da cena).
+    api.current.onModeChange = (m)=>{
+      if(m === "walk"){
+        walk.x = clamp(orbitTarget.x, -30, totalWidthAll+30);
+        walk.z = mainLayout.totalDepth/2; // sempre o meio das posições
+        walk.y = 1.6;
+        walk.yaw = 0;
+        walk.pitch = 0;
+        clampWalk();
+      } else {
+        orbitTarget.set(walk.x, 1.7, walk.z);
+        spherical.radius = 9; spherical.theta = walk.yaw + Math.PI; spherical.phi = Math.PI/3;
+        clampOrbitTarget();
+      }
+    };
+
+    /* ---------------------------------------------------------------------
+       Loop de renderização
+       --------------------------------------------------------------------- */
+    let rafId;
+    const clock = new THREE.Clock();
+    let elapsed = 0;
+    const animate = ()=>{
+      rafId = requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      elapsed += dt;
+
+      if(viewModeRef.current === "orbit"){
+        const offset = new THREE.Vector3().setFromSpherical(spherical);
+        camera.position.copy(orbitTarget).add(offset);
+        camera.lookAt(orbitTarget);
+      } else {
+        const speed = (keys.ShiftLeft || keys.run ? 8 : 4.2) * dt;
+        const fwd = new THREE.Vector3(Math.sin(walk.yaw), 0, Math.cos(walk.yaw));
+        const right = new THREE.Vector3(Math.cos(walk.yaw), 0, -Math.sin(walk.yaw));
+        if(keys.KeyW || keys.ArrowUp)    { walk.x -= fwd.x*speed;   walk.z -= fwd.z*speed; }
+        if(keys.KeyS || keys.ArrowDown)  { walk.x += fwd.x*speed;   walk.z += fwd.z*speed; }
+        if(keys.KeyA || keys.ArrowLeft)  { walk.x -= right.x*speed; walk.z -= right.z*speed; }
+        if(keys.KeyD || keys.ArrowRight) { walk.x += right.x*speed; walk.z += right.z*speed; }
+        clampWalk();
+        camera.position.set(walk.x, walk.y, walk.z);
+        const look = new THREE.Vector3(
+          -Math.sin(walk.yaw)*Math.cos(walk.pitch),
+          Math.sin(walk.pitch),
+          -Math.cos(walk.yaw)*Math.cos(walk.pitch)
+        );
+        camera.lookAt(walk.x+look.x, walk.y+look.y, walk.z+look.z);
+      }
+
+      // hover
+      raycaster.setFromCamera(pointerNdc, camera);
+      const hits = raycaster.intersectObjects(allBoxLayers.map(l=>l.mesh));
+      const hit = hits.length>0 ? hits[0] : null;
+      const hitEntry = hit ? allBoxLayers.find(l=>l.mesh===hit.object).entries[hit.instanceId] : null;
+      if(hitEntry !== hoveredEntry){
+        const prev = hoveredEntry;
+        hoveredEntry = hitEntry;
+        if(prev){ const layer = allBoxLayers.find(l=>l.entries.includes(prev)); refreshEntryVisual(layer, prev); layer.mesh.instanceMatrix.needsUpdate=true; layer.mesh.instanceColor && (layer.mesh.instanceColor.needsUpdate=true); }
+        if(hoveredEntry){ const layer = allBoxLayers.find(l=>l.entries.includes(hoveredEntry)); refreshEntryVisual(layer, hoveredEntry); layer.mesh.instanceMatrix.needsUpdate=true; layer.mesh.instanceColor && (layer.mesh.instanceColor.needsUpdate=true); }
+        mount.style.cursor = hoveredEntry ? "pointer" : (viewModeRef.current==="walk" ? "crosshair" : "grab");
+      }
+
+      const pulse = 0.35 + Math.sin(elapsed*4)*0.25;
+      alertMeshes.forEach(m=>{ m.material.opacity = pulse; });
+
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const onResize = ()=>{
+      const w = mount.clientWidth, hgt = mount.clientHeight;
+      camera.aspect = w/hgt;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, hgt);
+    };
+    window.addEventListener("resize", onResize);
+
+    api.current.cleanup = ()=>{
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("wheel", onWheel);
+      renderer.domElement.removeEventListener("mousemove", updatePointerNdc);
+      renderer.domElement.removeEventListener("click", onClick);
+      renderer.dispose();
+      if(mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+    };
+    return ()=> api.current.cleanup && api.current.cleanup();
+  }, [data, mainLayout, ficticiaLayout]);
+
+  /* =======================================================================
+     RENDER (React) — camada de UI sobre o canvas 3D
+     ======================================================================= */
+  if(error){
+    return h("div", { style:{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh",
+      color:"#ff8a80", fontFamily:"system-ui", fontSize:14, textAlign:"center", padding:20 } },
+      h("div", null, "Erro ao carregar estoque.json: ", error, h("br",null),
+        "Verifique se o arquivo está na mesma pasta que o index.html e se a conexão está estável."));
+  }
+  if(!data || !mainLayout){
+    return h("div", { style:{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      height:"100vh", color:"#a8a29a", fontFamily:"system-ui", fontSize:14, gap:12 } },
+      h("div", null, "Carregando armazém... ", progress>0 ? progress+"%" : ""),
+      h("div", { style:{ width:220, height:6, borderRadius:3, background:"#2a2e33", overflow:"hidden" } },
+        h("div", { style:{ width:progress+"%", height:"100%", background:"#8ecff5", transition:"width 0.2s" } })),
+      h("div", { style:{ fontSize:11, color:"#6b6f74" } }, "Baixando dados do estoque (~3.7 MB)"));
+  }
+
+  const dpadBtnStyle = { width:52, height:52, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.15)",
+    background:"rgba(20,24,28,0.85)", color:"#f4efe6", fontSize:20, display:"flex", alignItems:"center",
+    justifyContent:"center", userSelect:"none", touchAction:"none" };
+  const dpadHandlers = (code)=>({
+    onPointerDown:(e)=>{ e.preventDefault(); api.current.setKey && api.current.setKey(code, true); },
+    onPointerUp:(e)=>{ e.preventDefault(); api.current.setKey && api.current.setKey(code, false); },
+    onPointerLeave:()=>{ api.current.setKey && api.current.setKey(code, false); },
+    onPointerCancel:()=>{ api.current.setKey && api.current.setKey(code, false); },
+  });
+
+  const filterBtnStyle = (active, color)=>({
+    background: active ? color : "rgba(255,255,255,0.08)",
+    color:"#f4efe6", border:"none", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer"
+  });
+
+  return h("div", { style:{ width:"100%", height:"100vh", position:"relative", background:"#0d1013",
+    fontFamily:"'Inter', system-ui, sans-serif", overflow:"hidden" } },
+
+    // --- barra superior ---
+    h("div", { style:{ position:"absolute", top:0, left:0, right:0, zIndex:10, display:"flex",
+      justifyContent:"space-between", alignItems:"flex-start", padding:"16px 20px", pointerEvents:"none",
+      flexWrap:"wrap", gap:8 } },
+
+      h("div", { style:{ pointerEvents:"auto" } },
+        h("h1", { style:{ margin:0, fontSize:20, color:"#f4efe6", letterSpacing:"-0.02em", fontFamily:"'JetBrains Mono', monospace" } }, "ARMAZÉM 3D — IMAGINAE"),
+        h("p", { style:{ margin:"2px 0 8px", fontSize:12, color:"#a8a29a" } },
+          data.length.toLocaleString("pt-BR"), " posições \xB7 ", totalItens.toLocaleString("pt-BR"), " lotes/SKUs \xB7 ",
+          mainLayout.ruas.length, " ruas",
+          totalAlertas>0 && h("span", { style:{ color:"#ff8a80" } }, " \xB7 ", totalAlertas, " com alerta \u26A0")),
+
+        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:6 } },
+          h("input", { type:"text", value:searchText, onChange:(e)=>onSearchChange(e.target.value),
+            placeholder:"Buscar posição ou código...", style:{ width:190, padding:"6px 10px", borderRadius:6,
+            border:"1px solid rgba(255,255,255,0.15)", background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" } }),
+          h("select", { value: mode.type==="cliente" ? mode.value : "", onChange:(e)=>onClienteChange(e.target.value),
+            style:{ width:150, padding:"6px 10px", borderRadius:6, border:"1px solid rgba(255,255,255,0.15)",
+            background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" } },
+            h("option", { value:"" }, "Filtrar por cliente..."),
+            clientes.map(c => h("option", { key:c, value:c }, c))),
+          h("button", { onClick:()=>toggleMode("vencido"), style: filterBtnStyle(mode.type==="vencido", "#c0392b") }, "\u23F0 Vencidos"),
+          h("button", { onClick:()=>toggleMode("danificado"), style: filterBtnStyle(mode.type==="danificado", "#c0392b") }, "\u2757 Danificados"),
+          h("button", { onClick:()=>toggleMode("vazio"), style: filterBtnStyle(mode.type==="vazio", "#2a9d8f") }, "\u25A2 Vazias"),
+          mode.type!=="none" && h("button", { onClick:()=>{ setSearchText(""); setMode({type:"none"}); },
+            style:{ padding:"6px 10px", borderRadius:6, border:"1px solid rgba(255,255,255,0.15)",
+            background:"rgba(255,255,255,0.06)", color:"#a8a29a", fontSize:12, cursor:"pointer" } }, "Limpar")
+        ),
+
+        modeLabel && h("div", { style:{ marginTop:6, maxHeight:280, overflowY:"auto", background:"rgba(17,20,23,0.97)",
+          borderRadius:6, border:"1px solid rgba(255,255,255,0.1)", width:320 } },
+          h("div", { style:{ padding:"6px 10px", fontSize:11, color:"#8ecff5", borderBottom:"1px solid rgba(255,255,255,0.08)" } }, modeLabel),
+          mode.type==="busca" && h(React.Fragment, null,
+            searchResults.length===0 && h("div", { style:{ padding:8, fontSize:12, color:"#a8a29a" } }, "Nenhum resultado"),
+            searchResultsShown.map(p => h("div", { key:p.pos, onClick:()=>focusPosition(p),
+              style:{ padding:"6px 10px", fontSize:12, color:"#f4efe6", cursor:"pointer", borderBottom:"1px solid rgba(255,255,255,0.06)" } },
+              h("strong", { style:{ color:"#e8a13a" } }, p.pos), " \u2014 rua ", p.rua, " \xB7 ", p.itens.length, " ", p.itens.length===1?"item":"itens",
+              p.alerta && h("span", { style:{ color:"#ff8a80" } }, " \u26A0"))),
+            searchResults.length>searchResultsShown.length && h("div", { style:{ padding:"6px 10px", fontSize:11, color:"#6b6f74" } },
+              "+ ", searchResults.length-searchResultsShown.length, " posições (refine a busca para ver todas)")
+          )
+        )
+      ),
+
+      h("div", { style:{ pointerEvents:"auto", display:"flex", gap:6 } },
+        h("button", { onClick: resetView, style:{ background:"rgba(255,255,255,0.08)", color:"#f4efe6", border:"none",
+          borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u{1F3E0} Visão geral"),
+        [["orbit","\u{1F5B1}\uFE0F Órbita"], ["walk","\u{1F6B6} Andar"]].map(([m,label]) =>
+          h("button", { key:m, onClick:()=>setViewMode(m), style:{ background: viewMode===m ? "#2a6f77" : "rgba(255,255,255,0.08)",
+            color:"#f4efe6", border:"none", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, label))
+      )
+    ),
+
+    // --- barra de ruas (atalhos) ---
+    h("div", { style:{ position:"absolute", top:118, left:20, right:20, zIndex:9, pointerEvents:"auto",
+      display:"flex", gap:4, overflowX:"auto", padding:"4px 0" } },
+      mainLayout.ruas.map(r => h("button", { key:r, onClick:()=>jumpToRua(r), style:{ flex:"0 0 auto",
+        padding:"4px 10px", borderRadius:14, fontSize:11, fontWeight:600, border:"1px solid rgba(255,255,255,0.12)",
+        background:"rgba(20,24,28,0.75)", color:"#e8a13a", cursor:"pointer" } }, r)),
+      ficticiaLayout && h("button", { onClick: jumpToFicticio, style:{ flex:"0 0 auto", padding:"4px 10px",
+        borderRadius:14, fontSize:11, fontWeight:600, border:"1px solid rgba(217,164,255,0.4)",
+        background:"rgba(106,75,138,0.35)", color:"#d9a4ff", cursor:"pointer" } }, "\u26A0 Bloco fictício")
+    ),
+
+    // --- legenda ---
+    h("div", { style:{ position:"absolute", bottom:16, left:20, zIndex:10, background:"rgba(20,24,28,0.85)",
+      padding:"10px 14px", borderRadius:8, fontSize:11, color:"#a8a29a", pointerEvents:"none", maxWidth:320 } },
+      h("div", { style:{ display:"flex", alignItems:"center", gap:8, marginBottom:4 } },
+        h("span", null, "Giro rápido"),
+        h("div", { style:{ width:90, height:8, borderRadius:4, background:"linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)" } }),
+        h("span", null, "Parado há muito tempo")),
+      h("div", null, "Contorno vermelho pulsante = item vencido ou danificado na posição"),
+      h("div", { style:{ marginTop:6, opacity:0.8 } },
+        viewMode==="orbit" ? "Órbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
+                            : "Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")
+    ),
+
+    // --- viewport 3D ---
+    h("div", { ref: mountRef, style:{ width:"100%", height:"100%", cursor: viewMode==="walk" ? "crosshair" : "grab" } }),
+
+    // --- controles de caminhada ---
+    viewMode==="walk" && h("div", { style:{ position:"absolute", bottom:24, right:24, zIndex:10, pointerEvents:"auto" } },
+      h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(3, 52px)", gridTemplateRows:"repeat(2, 52px)", gap:6, justifyItems:"center" } },
+        h("div", null), h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyW") }, "\u25B2"), h("div", null),
+        h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyA") }, "\u25C0"),
+        h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyS") }, "\u25BC"),
+        h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyD") }, "\u25B6")),
+      h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr")),
+
+    h(DetailPanel, { selected, onClose:()=>setSelected(null) })
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(h(Armazem3D, null));
 </script>
 </body>
 </html>
