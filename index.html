@@ -54,10 +54,67 @@ function giroColor(g){
   return g < 0.5 ? out.copy(fast).lerp(mid, g*2) : out.copy(mid).lerp(slow, (g-0.5)*2);
 }
 const COLOR_VENCIDO_DANIFICADO = new THREE.Color(0xe63946);
+const COLOR_VENCE_7D           = new THREE.Color(0xff8c1a); // laranja: vence em até 7 dias
+const COLOR_VENCE_15D          = new THREE.Color(0xf0c419); // amarelo: vence em até 15 dias
 const COLOR_CLIENTE_DESTAQUE   = new THREE.Color(0x8ecff5);
 const COLOR_VAZIO              = new THREE.Color(0x4fd1c5);
 const COLOR_HOVER              = new THREE.Color(0xffffff);
 const COLOR_SELECT             = new THREE.Color(0x2e6f77);
+
+/* =========================================================================
+   ALERTA PREDITIVO DE VALIDADE
+   Em vez de só marcar "vencido" quando já venceu, calculamos quantos dias
+   faltam para o vencimento e classificamos em faixas de risco. Aceita datas
+   em formato DD/MM/AAAA ou AAAA-MM-DD (cobre os formatos mais comuns de
+   planilha/ERP brasileiro).
+   ========================================================================= */
+// helper tolerante: aceita true, "true", "TRUE", 1, "1" como verdadeiro
+// (dados reais de planilha/ERP às vezes não vêm como booleano estrito)
+function isTruthy(v){
+  if(v === true || v === 1) return true;
+  if(typeof v === "string") return v.trim().toLowerCase() === "true" || v.trim() === "1";
+  return false;
+}
+function parseValidade(str){
+  if(!str) return null;
+  const s = String(str).trim();
+  let d;
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)){
+    d = new Date(s.slice(0,10) + "T00:00:00");
+  } else if(/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s)){
+    const [dd,mm,yy] = s.split("/").map(Number);
+    d = new Date(yy < 100 ? 2000+yy : yy, mm-1, dd);
+  } else {
+    return null;
+  }
+  return isNaN(d.getTime()) ? null : d;
+}
+const MS_DIA = 86400000;
+function diasParaVencer(validadeStr, hoje){
+  const d = parseValidade(validadeStr);
+  if(!d) return null;
+  return Math.round((d.getTime() - hoje.getTime()) / MS_DIA);
+}
+// classifica um item em: "vencido" | "critico" (<=7d) | "atencao" (<=15d) | null (ok/sem data)
+function riscoValidadeItem(it, hoje){
+  if(isTruthy(it[6])) return "vencido"; // já vencido conforme flag do sistema
+  const dias = diasParaVencer(it[5], hoje);
+  if(dias === null) return null;
+  if(dias < 0) return "vencido";
+  if(dias <= 7) return "critico";
+  if(dias <= 15) return "atencao";
+  return null;
+}
+// pior risco entre os itens de uma posição
+function riscoValidadePosicao(itens, hoje){
+  let pior = null;
+  const ordem = { vencido:3, critico:2, atencao:1 };
+  itens.forEach(it=>{
+    const r = riscoValidadeItem(it, hoje);
+    if(r && (!pior || ordem[r] > ordem[pior])) pior = r;
+  });
+  return pior;
+}
 
 /* =========================================================================
    CLASSIFICAÇÃO: posições reais do galpão x posições fictícias/irregulares
@@ -209,9 +266,17 @@ function DetailPanel({ selected, onClose }){
         h("span", null, "Val: ", it.validade || "\u2014")
       ),
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
-        it.vencido && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "VENCIDO"),
-        it.danificado && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "DANIFICADO"),
-        it.perecivel && h("span", { style:{ fontSize:10, background:"rgba(41,128,185,0.25)", color:"#8ecff5", padding:"1px 6px", borderRadius:4 } }, "PERECÍVEL")
+        isTruthy(it.vencido) && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "VENCIDO"),
+        isTruthy(it.danificado) && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "DANIFICADO"),
+        isTruthy(it.perecivel) && h("span", { style:{ fontSize:10, background:"rgba(41,128,185,0.25)", color:"#8ecff5", padding:"1px 6px", borderRadius:4 } }, "PERECÍVEL"),
+        (()=>{
+          if(isTruthy(it.vencido)) return null; // já mostrado acima
+          const dias = diasParaVencer(it.validade, new Date(new Date().setHours(0,0,0,0)));
+          if(dias === null || dias > 15) return null;
+          const cor = dias <= 7 ? { bg:"rgba(255,140,26,0.22)", fg:"#ffb066" } : { bg:"rgba(240,196,25,0.2)", fg:"#f0d060" };
+          return h("span", { style:{ fontSize:10, background:cor.bg, color:cor.fg, padding:"1px 6px", borderRadius:4 } },
+            "VENCE EM ", dias, "D");
+        })()
       )
     ))
   );
@@ -284,6 +349,25 @@ function Armazem3D(){
 
   const totalItens = useMemo(()=> data ? data.reduce((acc,p)=>acc+p.itens.length,0) : 0, [data]);
   const totalAlertas = useMemo(()=> data ? data.filter(p=>p.alerta).length : 0, [data]);
+
+  // ocupação por rua: posições ocupadas vs capacidade teórica da grade
+  // (maxCol x maxNiv observados naquela rua). Ajuda a decidir onde alocar
+  // entrada nova sem precisar navegar o mapa 3D procurando vazio.
+  const ocupacaoPorRua = useMemo(()=>{
+    if(!mainLayout) return {};
+    const ocupadas = {};
+    mainLayout.positions.forEach(p=>{ ocupadas[p.rua] = (ocupadas[p.rua]||0) + 1; });
+    const out = {};
+    mainLayout.ruas.forEach(r=>{
+      const capacidade = (mainLayout.maxColByRua[r]||0) * (mainLayout.maxLevelByRua[r]||0);
+      const ocupado = ocupadas[r] || 0;
+      out[r] = { ocupado, capacidade, pct: capacidade>0 ? ocupado/capacidade : 0 };
+    });
+    return out;
+  }, [mainLayout]);
+
+  const ruasLotadas = useMemo(()=> Object.values(ocupacaoPorRua).filter(o=>o.pct>=0.85).length, [ocupacaoPorRua]);
+
   const clientes = useMemo(()=>{
     if(!data) return [];
     const set = new Set();
@@ -306,6 +390,7 @@ function Armazem3D(){
     : mode.type==="busca" ? "Busca: \"" + mode.value + "\""
     : mode.type==="vencido" ? "Mostrando apenas posições com item VENCIDO"
     : mode.type==="danificado" ? "Mostrando apenas posições com item DANIFICADO"
+    : mode.type==="risco" ? "Vencidos + vence em até 15 dias (vermelho/laranja/amarelo)"
     : mode.type==="vazio" ? "Destacando posições vazias"
     : null;
 
@@ -512,6 +597,7 @@ function Armazem3D(){
     // Cada caixa fica centralizada DENTRO da célula da posição (correção do
     // bug em que o material ficava a cavaleiro entre duas posições).
     // ---------------------------------------------------------------------
+    const hojeRef = new Date(); hojeRef.setHours(0,0,0,0);
     function buildBoxLayer(layout){
       const positions = layout.positions.filter(p => layout.ruaX[p.rua] !== undefined);
       const geo = new THREE.BoxGeometry(1,1,1);
@@ -527,7 +613,8 @@ function Armazem3D(){
         const boxSizeZ = Math.min(COL_SPACING*0.82, boxSizeX*0.85);
         const boxHeight = LEVEL_HEIGHT * (0.4 + Math.min(itemCount,10)*0.05);
         const y = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + boxHeight/2 + 0.08;
-        return { data:p, index:i, x, y, z:zCenter, boxSizeX, boxSizeZ, boxHeight, baseColor: giroColor(p.giro) };
+        const risco = riscoValidadePosicao(p.itens, hojeRef);
+        return { data:p, index:i, x, y, z:zCenter, boxSizeX, boxSizeZ, boxHeight, baseColor: giroColor(p.giro), risco };
       });
 
       const dummy = new THREE.Object3D();
@@ -556,15 +643,19 @@ function Armazem3D(){
     const combinedPosIndex = new Map();
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
 
-    // contorno pulsante para posições com alerta (vencido/danificado)
+    // contorno pulsante para posições com risco de validade (vencido/crítico/atenção) ou danificado
+    const RISCO_COR_HEX = { vencido:0xff5544, critico:0xff8c1a, atencao:0xf0c419 };
     const alertMeshes = [];
     allBoxLayers.forEach(layer=>{
       layer.entries.forEach(e=>{
-        if(!e.data.alerta) return;
+        const temDanificado = e.data.itens.some(it=>isTruthy(it[8]));
+        if(!e.risco && !temDanificado) return;
+        const corHex = RISCO_COR_HEX[e.risco] || 0xff5544;
         const g = new THREE.BoxGeometry(e.boxSizeX*1.18, e.boxHeight*1.18, e.boxSizeZ*1.18);
-        const m = new THREE.MeshBasicMaterial({ color:0xff5544, transparent:true, opacity:0.5, wireframe:true });
+        const m = new THREE.MeshBasicMaterial({ color:corHex, transparent:true, opacity:0.5, wireframe:true });
         const mesh = new THREE.Mesh(g, m);
         mesh.position.set(e.x, e.y, e.z);
+        mesh.userData.risco = e.risco || "vencido";
         scene.add(mesh);
         alertMeshes.push(mesh);
       });
@@ -603,19 +694,22 @@ function Armazem3D(){
     function entryMatchesMode(entry){
       if(currentModeType === "none" || currentModeType === "busca") return true;
       const itens = entry.data.itens;
-      if(currentModeType === "vencido")     return itens.some(it => it[6] === true);
-      if(currentModeType === "danificado")  return itens.some(it => it[8] === true);
-      if(currentModeType === "cliente")     return itens.some(it => it[0] === currentModeValue);
+      if(currentModeType === "vencido")     return itens.some(it => isTruthy(it[6]));
+      if(currentModeType === "danificado")  return itens.some(it => isTruthy(it[8]));
+      if(currentModeType === "risco")       return !!entry.risco;
+      if(currentModeType === "cliente")     return itens.some(it => String(it[0]||"").trim() === String(currentModeValue||"").trim());
       return true;
     }
     const COLOR_DIMMED = new THREE.Color(0x14171a);
+    const RISCO_COR_THREE = { vencido:COLOR_VENCIDO_DANIFICADO, critico:COLOR_VENCE_7D, atencao:COLOR_VENCE_15D };
     function entryHighlightColor(entry){
       if(currentModeType === "vencido" || currentModeType === "danificado") return COLOR_VENCIDO_DANIFICADO;
+      if(currentModeType === "risco") return RISCO_COR_THREE[entry.risco] || COLOR_VENCIDO_DANIFICADO;
       if(currentModeType === "cliente") return COLOR_CLIENTE_DESTAQUE;
       return entry.baseColor;
     }
     function refreshEntryVisual(layer, entry){
-      const isFiltering = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="cliente";
+      const isFiltering = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="risco" || currentModeType==="cliente";
       const matches = entryMatchesMode(entry);
       // itens que não combinam com o filtro continuam visíveis (bem escurecidos),
       // para dar noção geral do armazém; os que combinam ficam bem destacados
@@ -791,7 +885,7 @@ function Armazem3D(){
         const hitMesh = hits[0].object;
         const layer = allBoxLayers.find(l=>l.mesh===hitMesh);
         const entry = layer.entries[hits[0].instanceId];
-        if(!entryMatchesMode(entry) && (currentModeType==="vencido"||currentModeType==="danificado"||currentModeType==="cliente")) return;
+        if(!entryMatchesMode(entry) && (currentModeType==="vencido"||currentModeType==="danificado"||currentModeType==="risco"||currentModeType==="cliente")) return;
         setSelected(prev => (prev && prev.pos===entry.data.pos) ? null : entry.data);
       }
     };
@@ -899,11 +993,11 @@ function Armazem3D(){
         mount.style.cursor = hoveredEntry ? "pointer" : (viewModeRef.current==="walk" ? "crosshair" : "grab");
       }
 
-      // o contorno pulsante de vencido/danificado só deve piscar quando
-      // nenhum filtro estiver ativo, ou quando o próprio filtro de
-      // vencido/danificado estiver ativo. Com outros filtros (cliente/vazio)
-      // ou dentro deles, ele fica parado/oculto para não distrair.
-      const shouldPulse = currentModeType === "none" || currentModeType === "vencido" || currentModeType === "danificado";
+      // o contorno pulsante de vencido/danificado/risco só deve piscar quando
+      // nenhum filtro estiver ativo, ou quando um desses filtros de alerta
+      // estiver ativo. Com outros filtros (cliente/vazio) ele fica
+      // parado/oculto para não distrair.
+      const shouldPulse = currentModeType === "none" || currentModeType === "vencido" || currentModeType === "danificado" || currentModeType === "risco";
       const pulse = 0.35 + Math.sin(elapsed*4)*0.25;
       alertMeshes.forEach(m=>{
         m.visible = shouldPulse;
@@ -986,7 +1080,8 @@ function Armazem3D(){
         h("p", { style:{ margin:"2px 0 8px", fontSize:12, color:"#a8a29a" } },
           data.length.toLocaleString("pt-BR"), " posições \xB7 ", totalItens.toLocaleString("pt-BR"), " lotes/SKUs \xB7 ",
           mainLayout.ruas.length, " ruas",
-          totalAlertas>0 && h("span", { style:{ color:"#ff8a80" } }, " \xB7 ", totalAlertas, " com alerta \u26A0")),
+          totalAlertas>0 && h("span", { style:{ color:"#ff8a80" } }, " \xB7 ", totalAlertas, " com alerta \u26A0"),
+          ruasLotadas>0 && h("span", { style:{ color:"#e8a13a" } }, " \xB7 ", ruasLotadas, " rua(s) quase lotada(s) \u2265 85%")),
 
         h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:6 } },
           h("input", { type:"text", value:searchText, onChange:(e)=>onSearchChange(e.target.value),
@@ -997,6 +1092,7 @@ function Armazem3D(){
             background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" } },
             h("option", { value:"" }, "Filtrar por cliente..."),
             clientes.map(c => h("option", { key:c, value:c }, c))),
+          h("button", { onClick:()=>toggleMode("risco"), style: filterBtnStyle(mode.type==="risco", "#e8a13a") }, "\u26A0 Vence em breve"),
           h("button", { onClick:()=>toggleMode("vencido"), style: filterBtnStyle(mode.type==="vencido", "#c0392b") }, "\u23F0 Vencidos"),
           h("button", { onClick:()=>toggleMode("danificado"), style: filterBtnStyle(mode.type==="danificado", "#c0392b") }, "\u2757 Danificados"),
           h("button", { onClick:()=>toggleMode("vazio"), style: filterBtnStyle(mode.type==="vazio", "#2a9d8f") }, "\u25A2 Vazias"),
@@ -1029,15 +1125,27 @@ function Armazem3D(){
       )
     ),
 
-    // --- barra de ruas (atalhos) ---
+    // --- barra de ruas (atalhos) com indicador de ocupação ---
     h("div", { style:{ position:"absolute", top:118, left:20, right:20, zIndex:9, pointerEvents:"auto",
       display:"flex", gap:4, overflowX:"auto", padding:"4px 0" } },
-      mainLayout.ruas.map(r => h("button", { key:r, onClick:()=>jumpToRua(r), style:{ flex:"0 0 auto",
-        padding:"4px 10px", borderRadius:14, fontSize:11, fontWeight:600, border:"1px solid rgba(255,255,255,0.12)",
-        background:"rgba(20,24,28,0.75)", color:"#e8a13a", cursor:"pointer" } }, r)),
+      mainLayout.ruas.map(r => {
+        const oc = ocupacaoPorRua[r] || { ocupado:0, capacidade:0, pct:0 };
+        const pctShow = Math.round(oc.pct*100);
+        // verde (livre) -> amarelo -> vermelho (lotado)
+        const barColor = oc.pct < 0.6 ? "#2e8b57" : oc.pct < 0.85 ? "#e8a13a" : "#c0392b";
+        return h("button", { key:r, onClick:()=>jumpToRua(r), title: "Rua " + r + ": " + oc.ocupado + "/" + oc.capacidade + " posições ocupadas (" + pctShow + "%)",
+          style:{ flex:"0 0 auto", padding:"4px 10px 6px", borderRadius:10, fontSize:11, fontWeight:600,
+          border:"1px solid rgba(255,255,255,0.12)", background:"rgba(20,24,28,0.75)", color:"#e8a13a",
+          cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, minWidth:38 } },
+          h("span", null, r),
+          h("div", { style:{ width:26, height:4, borderRadius:2, background:"rgba(255,255,255,0.12)", overflow:"hidden" } },
+            h("div", { style:{ width: pctShow+"%", height:"100%", background:barColor } })),
+          h("span", { style:{ fontSize:8, color:"#6b6f74", fontWeight:400 } }, pctShow+"%")
+        );
+      }),
       ficticiaLayout && h("button", { onClick: jumpToFicticio, style:{ flex:"0 0 auto", padding:"4px 10px",
         borderRadius:14, fontSize:11, fontWeight:600, border:"1px solid rgba(217,164,255,0.4)",
-        background:"rgba(106,75,138,0.35)", color:"#d9a4ff", cursor:"pointer" } }, "\u26A0 Bloco fictício")
+        background:"rgba(106,75,138,0.35)", color:"#d9a4ff", cursor:"pointer", alignSelf:"center" } }, "\u26A0 Bloco fictício")
     ),
 
     // --- legenda ---
@@ -1047,7 +1155,10 @@ function Armazem3D(){
         h("span", null, "Giro rápido"),
         h("div", { style:{ width:90, height:8, borderRadius:4, background:"linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)" } }),
         h("span", null, "Parado há muito tempo")),
-      h("div", null, "Contorno vermelho pulsante = item vencido ou danificado na posição"),
+      h("div", null, "Contorno pulsante: ",
+        h("span", { style:{ color:"#ff8a80" } }, "vermelho"), "=vencido/danificado \xB7 ",
+        h("span", { style:{ color:"#ff8c1a" } }, "laranja"), "=vence \u2264 7 dias \xB7 ",
+        h("span", { style:{ color:"#f0d060" } }, "amarelo"), "=vence \u2264 15 dias"),
       h("div", { style:{ marginTop:6, opacity:0.8 } },
         viewMode==="orbit" ? "Órbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
                             : "Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")
