@@ -140,6 +140,7 @@ function Armazem3D() {
   const stateRef = useRef({});
   const [positions, setPositions] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [loadProgress, setLoadProgress] = useState(0);
   const [selected, setSelected] = useState(null);
   const [moveMode, setMoveMode] = useState("orbit");
   const [search, setSearch] = useState("");
@@ -147,13 +148,35 @@ function Armazem3D() {
   moveModeRef.current = moveMode;
 
   useEffect(() => {
+    let cancelled = false;
+    const timeoutId = setTimeout(() => {
+      if (!cancelled) setLoadError("Tempo esgotado ao carregar estoque.json (30s). Verifique se o arquivo está na mesma pasta do index.html e se o link direto abre no navegador.");
+    }, 30000);
+
     fetch("./estoque.json")
-      .then((r) => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.json();
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Arquivo estoque.json retornou HTTP " + r.status + ". Confirme se ele está publicado na mesma pasta do index.html.");
+        const total = Number(r.headers.get("content-length")) || 0;
+        const reader = r.body ? r.body.getReader() : null;
+        if (!reader) return r.json(); // fallback sem streaming
+
+        let received = 0;
+        const chunks = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (total > 0 && !cancelled) setLoadProgress(Math.round((received / total) * 100));
+        }
+        const blob = new Blob(chunks);
+        const text = await blob.text();
+        return JSON.parse(text);
       })
-      .then(setPositions)
-      .catch((err) => setLoadError(err.message));
+      .then((data) => { if (!cancelled) { setPositions(data); clearTimeout(timeoutId); } })
+      .catch((err) => { if (!cancelled) { setLoadError(err.message || String(err)); clearTimeout(timeoutId); } });
+
+    return () => { cancelled = true; clearTimeout(timeoutId); };
   }, []);
 
   const layout = useMemo(() => (positions ? buildLayout(positions) : null), [positions]);
@@ -479,15 +502,22 @@ function Armazem3D() {
 
   if (loadError) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", color: "#ff8a80", fontFamily: "system-ui", fontSize: 14, textAlign: "center", padding: 20 }}>
-        Erro ao carregar estoque.json: {loadError}<br/>Verifique se o arquivo está na mesma pasta que o index.html.
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", color: "#ff8a80", fontFamily: "system-ui", fontSize: 14, textAlign: "center", padding: 30, gap: 10 }}>
+        <div style={{ fontSize: 32 }}>⚠</div>
+        <div style={{ maxWidth: 500 }}>Erro ao carregar estoque.json:<br/><strong>{loadError}</strong></div>
+        <div style={{ color: "#a8a29a", fontSize: 12, maxWidth: 500 }}>
+          Teste abrir <code>seu-site.vercel.app/estoque.json</code> direto no navegador — se der erro 404 ou não abrir, o arquivo não foi publicado corretamente na Vercel.
+        </div>
       </div>
     );
   }
   if (!positions || !layout) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", color: "#a8a29a", fontFamily: "system-ui", fontSize: 14 }}>
-        Carregando armazém...
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", color: "#a8a29a", fontFamily: "system-ui", fontSize: 14, gap: 12 }}>
+        <div>Carregando armazém... {loadProgress > 0 ? `${loadProgress}%` : ""}</div>
+        <div style={{ width: 220, height: 6, background: "rgba(255,255,255,0.1)", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ width: `${loadProgress}%`, height: "100%", background: "#e8a13a", transition: "width 0.2s" }} />
+        </div>
       </div>
     );
   }
