@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Armazém 3D — Imaginae</title>
+<style>
+  html, body, #root { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d1013; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #3a3f45; border-radius: 4px; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root">
+  <div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#a8a29a;font-family:system-ui;font-size:14px;">
+    Carregando armazém...
+  </div>
+</div>
+
+<script type="text/babel" data-presets="react">
+const { useEffect, useRef, useState, useMemo, useCallback } = React;
+
+/* =========================================================================
+   Estrutura de cada posição em /estoque.json:
+   { pos, rua, col, niv, giro, alerta, itens: [
+       [cliente, codigo, desc, qtde, lote, validade, vencido, perecivel, danificado, giro_score], ...
+   ]}
+   ========================================================================= */
+const ITEM_FIELDS = ["cliente","codigo","desc","qtde","lote","validade","vencido","perecivel","danificado","giroScore"];
+
+function itemToObj(arr) {
+  const o = {};
+  ITEM_FIELDS.forEach((f, i) => { o[f] = arr[i]; });
+  return o;
+}
+
+function buildCorridors(ruas) {
+  const sorted = [...ruas].sort();
+  const corridors = [];
+  for (let i = 0; i < sorted.length; i += 2) {
+    corridors.push({ left: sorted[i], right: sorted[i + 1] ?? null });
+  }
+  return corridors;
+}
+
+/* Cor por giro de estoque: 0 = movimentou recente (verde) -> 1 = parado há muito tempo (vermelho) */
+function giroColor(score) {
+  const good = new THREE.Color(0x2e8b57);   // verde
+  const mid = new THREE.Color(0xe8a13a);    // âmbar
+  const bad = new THREE.Color(0xc0392b);    // vermelho
+  const c = new THREE.Color();
+  if (score < 0.5) c.copy(good).lerp(mid, score * 2);
+  else c.copy(mid).lerp(bad, (score - 0.5) * 2);
+  return c;
+}
+
+const COL_SPACING = 1.35;
+const LEVEL_HEIGHT = 1.9;
+const RACK_DEPTH = 1.15;
+const AISLE_WIDTH = 3.4;
+const CORRIDOR_GAP = 2.6;
+const BASE_LEVEL_Y = 0.15;
+const BEAM_THICK = 0.08;
+const POST_SIZE = 0.12;
+
+function buildLayout(positions) {
+  const ruas = Array.from(new Set(positions.map((p) => p.rua)));
+  const corridors = buildCorridors(ruas);
+  const maxCol = Math.max(...positions.map((p) => p.col));
+  const maxLevel = Math.max(...positions.map((p) => p.niv));
+  const corridorSpanX = AISLE_WIDTH + RACK_DEPTH * 2 + CORRIDOR_GAP;
+  const ruaX = {};
+  corridors.forEach((corr, idx) => {
+    const cCenter = idx * corridorSpanX;
+    if (corr.left) ruaX[corr.left] = cCenter - AISLE_WIDTH / 2 - RACK_DEPTH / 2;
+    if (corr.right) ruaX[corr.right] = cCenter + AISLE_WIDTH / 2 + RACK_DEPTH / 2;
+  });
+  const totalWidth = corridors.length * corridorSpanX;
+  const totalDepth = maxCol * COL_SPACING;
+  return { ruas, corridors, ruaX, maxCol, maxLevel, corridorSpanX, totalWidth, totalDepth };
+}
+
+/* ---------------- UI: painel de detalhes ---------------- */
+function DetailPanel({ selected, onClose }) {
+  if (!selected) return null;
+  const itens = selected.itens.map(itemToObj);
+  return (
+    <div style={{
+      position: "absolute", top: 0, right: 0, width: 360, maxWidth: "90vw", height: "100%",
+      background: "rgba(17,20,23,0.97)", color: "#f4efe6", padding: "20px 18px",
+      overflowY: "auto", boxShadow: "-8px 0 24px rgba(0,0,0,0.4)",
+      fontFamily: "'Inter', system-ui, sans-serif", borderLeft: "1px solid rgba(232,161,58,0.25)", zIndex: 20,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontFamily: "'JetBrains Mono', monospace", color: "#e8a13a" }}>{selected.pos}</h2>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#a8a29a", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+      </div>
+      <p style={{ margin: "2px 0 6px", fontSize: 12, color: "#a8a29a" }}>
+        Rua {selected.rua} · Coluna {selected.col} · Nível {selected.niv} — {itens.length} {itens.length === 1 ? "lote/SKU" : "lotes/SKUs"}
+      </p>
+      {selected.alerta && (
+        <div style={{ background: "rgba(192,57,43,0.18)", border: "1px solid rgba(192,57,43,0.5)", borderRadius: 6, padding: "6px 10px", fontSize: 11, color: "#ff8a80", marginBottom: 10 }}>
+          ⚠ Posição contém item vencido ou danificado
+        </div>
+      )}
+      {itens.map((item, idx) => (
+        <div key={idx} style={{
+          borderTop: idx === 0 ? "1px solid rgba(255,255,255,0.08)" : "none",
+          borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "10px 0", fontSize: 13,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, alignItems: "center" }}>
+            <span style={{ background: "#3a4550", color: "#f4efe6", fontWeight: 700, fontSize: 11, padding: "1px 6px", borderRadius: 4 }}>{item.cliente}</span>
+            <span style={{ color: "#a8a29a", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{item.codigo}</span>
+          </div>
+          <div style={{ marginBottom: 4, lineHeight: 1.35 }}>{item.desc}</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", color: "#a8a29a", fontSize: 11, marginBottom: 4 }}>
+            <span>Qtd: <strong style={{color:"#f4efe6"}}>{item.qtde}</strong></span>
+            <span>Lote: {item.lote || "—"}</span>
+            <span>Val: {item.validade || "—"}</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {item.vencido && <span style={{ fontSize: 10, background: "rgba(192,57,43,0.25)", color: "#ff8a80", padding: "1px 6px", borderRadius: 4 }}>VENCIDO</span>}
+            {item.danificado && <span style={{ fontSize: 10, background: "rgba(192,57,43,0.25)", color: "#ff8a80", padding: "1px 6px", borderRadius: 4 }}>DANIFICADO</span>}
+            {item.perecivel && <span style={{ fontSize: 10, background: "rgba(41,128,185,0.25)", color: "#8ecff5", padding: "1px 6px", borderRadius: 4 }}>PERECÍVEL</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------------- Componente principal ---------------- */
+function Armazem3D() {
+  const mountRef = useRef(null);
+  const stateRef = useRef({});
+  const [positions, setPositions] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [moveMode, setMoveMode] = useState("orbit");
+  const [search, setSearch] = useState("");
+  const moveModeRef = useRef(moveMode);
+  moveModeRef.current = moveMode;
+
+  useEffect(() => {
+    fetch("./estoque.json")
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(setPositions)
+      .catch((err) => setLoadError(err.message));
+  }, []);
+
+  const layout = useMemo(() => (positions ? buildLayout(positions) : null), [positions]);
+  const totalSkus = useMemo(() => positions ? positions.reduce((acc, p) => acc + p.itens.length, 0) : 0, [positions]);
+  const totalAlertas = useMemo(() => positions ? positions.filter((p) => p.alerta).length : 0, [positions]);
+
+  const searchResults = useMemo(() => {
+    if (!positions || !search.trim()) return [];
+    const q = search.trim().toUpperCase();
+    return positions.filter((p) =>
+      p.pos.toUpperCase().includes(q) ||
+      p.itens.some((it) => (it[0] || "").toUpperCase().includes(q) || (it[1] || "").toUpperCase().includes(q) || (it[2] || "").toUpperCase().includes(q))
+    ).slice(0, 30);
+  }, [positions, search]);
+
+  useEffect(() => { stateRef.current.selectedPos = selected?.pos ?? null; }, [selected]);
+
+  const focusOnPosition = useCallback((posData) => {
+    setSelected(posData);
+    const cam = stateRef.current.focusCamera;
+    if (cam) cam(posData);
+  }, []);
+
+  useEffect(() => {
+    if (!positions || !layout) return;
+    const mount = mountRef.current;
+    const width = mount.clientWidth;
+    const height = mount.clientHeight;
+    const { ruas, ruaX, maxCol, maxLevel, totalWidth, totalDepth, corridorSpanX } = layout;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1013);
+    scene.fog = new THREE.Fog(0x0d1013, 30, 90);
+
+    const centerX = totalWidth / 2 - corridorSpanX / 2;
+    const centerZ = totalDepth / 2;
+
+    const camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 400);
+    camera.position.set(centerX + totalWidth * 0.55, totalDepth * 0.6, centerZ + totalDepth * 0.85);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    mount.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dirLight = new THREE.DirectionalLight(0xfff2e0, 1.0);
+    dirLight.position.set(centerX + 25, 35, centerZ + 18);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.left = -totalWidth;
+    dirLight.shadow.camera.right = totalWidth;
+    dirLight.shadow.camera.top = totalDepth;
+    dirLight.shadow.camera.bottom = -totalDepth;
+    dirLight.shadow.camera.far = 120;
+    scene.add(dirLight);
+    scene.add(new THREE.HemisphereLight(0x8899aa, 0x1a1a1a, 0.4));
+
+    const floorGeo = new THREE.PlaneGeometry(totalWidth + 20, totalDepth + 20);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: 0.95 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(centerX, 0, centerZ);
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const aisleMat = new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.85, transparent: true, opacity: 0.3 });
+    layout.corridors.forEach((corr, idx) => {
+      const cx = idx * corridorSpanX;
+      const stripe = new THREE.Mesh(new THREE.PlaneGeometry(AISLE_WIDTH * 0.94, totalDepth), aisleMat);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.set(cx, 0.01, centerZ);
+      scene.add(stripe);
+    });
+
+    /* -------- estrutura de rack (instanced meshes p/ performance com muitas ruas) -------- */
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x2255aa, roughness: 0.4, metalness: 0.6 });
+    const beamMat = new THREE.MeshStandardMaterial({ color: 0xdd6611, roughness: 0.4, metalness: 0.5 });
+    const rackHeight = maxLevel * LEVEL_HEIGHT + BASE_LEVEL_Y + 0.3;
+
+    const nPostsPerRua = (maxCol + 1) * 2;
+    const postGeo = new THREE.BoxGeometry(POST_SIZE, rackHeight, POST_SIZE);
+    const postMesh = new THREE.InstancedMesh(postGeo, postMat, nPostsPerRua * ruas.length);
+    postMesh.castShadow = true;
+    let postIdx = 0;
+    const dummy = new THREE.Object3D();
+
+    const nBeamsPerRua = (maxLevel + 1) * 2;
+    const beamGeo = new THREE.BoxGeometry(BEAM_THICK, BEAM_THICK, maxCol * COL_SPACING + 0.3);
+    const beamMesh = new THREE.InstancedMesh(beamGeo, beamMat, nBeamsPerRua * ruas.length);
+    beamMesh.castShadow = true;
+    let beamIdx = 0;
+
+    ruas.forEach((rua) => {
+      const x = ruaX[rua];
+      for (let c = 0; c <= maxCol; c++) {
+        const z = c * COL_SPACING;
+        [-RACK_DEPTH / 2, RACK_DEPTH / 2].forEach((dz) => {
+          dummy.position.set(x + dz, rackHeight / 2, z);
+          dummy.updateMatrix();
+          postMesh.setMatrixAt(postIdx++, dummy.matrix);
+        });
+      }
+      for (let lvl = 0; lvl <= maxLevel; lvl++) {
+        const y = BASE_LEVEL_Y + lvl * LEVEL_HEIGHT;
+        [-RACK_DEPTH / 2, RACK_DEPTH / 2].forEach((dz) => {
+          dummy.position.set(x + dz, y, (maxCol * COL_SPACING) / 2);
+          dummy.updateMatrix();
+          beamMesh.setMatrixAt(beamIdx++, dummy.matrix);
+        });
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = 160; canvas.height = 72;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#f4efe6";
+      ctx.font = "bold 46px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(rua, 80, 36);
+      const texture = new THREE.CanvasTexture(canvas);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true }));
+      sprite.position.set(x, rackHeight + 0.7, -1.4);
+      sprite.scale.set(1.8, 0.9, 1);
+      scene.add(sprite);
+    });
+    postMesh.instanceMatrix.needsUpdate = true;
+    beamMesh.instanceMatrix.needsUpdate = true;
+    scene.add(postMesh);
+    scene.add(beamMesh);
+
+    /* -------- slots ocupados -------- */
+    const meshes = [];
+    const alertMeshes = [];
+    positions.forEach((data) => {
+      const x = ruaX[data.rua];
+      if (x === undefined) return;
+      const z = data.col * COL_SPACING;
+      const count = data.itens.length;
+      const boxSize = RACK_DEPTH * 0.72;
+      const boxHeight = LEVEL_HEIGHT * (0.4 + Math.min(count, 10) * 0.05);
+      const y = BASE_LEVEL_Y + (data.niv - 1) * LEVEL_HEIGHT + boxHeight / 2 + 0.08;
+
+      const geo = new THREE.BoxGeometry(boxSize, boxHeight, boxSize * 0.85);
+      const color = giroColor(data.giro);
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.08, roughness: 0.5, metalness: 0.1 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.position.set(x, y, z);
+      mesh.userData = { data };
+      scene.add(mesh);
+      meshes.push({ mesh, data });
+
+      if (data.alerta) {
+        const alertGeo = new THREE.BoxGeometry(boxSize * 1.18, boxHeight * 1.18, boxSize * 0.85 * 1.18);
+        const alertMat = new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.5, wireframe: true });
+        const alertMesh = new THREE.Mesh(alertGeo, alertMat);
+        alertMesh.position.copy(mesh.position);
+        scene.add(alertMesh);
+        alertMeshes.push(alertMesh);
+      }
+    });
+    stateRef.current.meshes = meshes;
+
+    /* -------- controles: órbita + andar -------- */
+    const target = new THREE.Vector3(centerX, 1.6, centerZ);
+    const spherical = new THREE.Spherical();
+    spherical.setFromVector3(new THREE.Vector3().copy(camera.position).sub(target));
+
+    const walk = { x: centerX, z: centerZ - totalDepth * 0.6, yaw: 0, pitch: 0, y: 1.6 };
+    const keys = {};
+
+    let isDragging = false;
+    let prevX = 0, prevY = 0;
+    let dragDistance = 0;
+
+    const onPointerDown = (e) => { isDragging = true; prevX = e.clientX; prevY = e.clientY; dragDistance = 0; };
+    const onPointerUp = () => { isDragging = false; };
+    const onPointerMove = (e) => {
+      const dx = e.clientX - prevX;
+      const dy = e.clientY - prevY;
+      if (isDragging) {
+        dragDistance += Math.abs(dx) + Math.abs(dy);
+        if (moveModeRef.current === "orbit") {
+          spherical.theta -= dx * 0.006;
+          spherical.phi = Math.max(0.15, Math.min(Math.PI / 2.05, spherical.phi + dy * 0.006));
+        } else {
+          walk.yaw -= dx * 0.004;
+          walk.pitch = Math.max(-1.1, Math.min(1.1, walk.pitch - dy * 0.004));
+        }
+      }
+      prevX = e.clientX; prevY = e.clientY;
+    };
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (moveModeRef.current === "orbit") {
+        spherical.radius = Math.max(4, Math.min(Math.max(totalWidth, totalDepth) * 1.3, spherical.radius + e.deltaY * 0.02));
+      }
+    };
+    const onKeyDown = (e) => { keys[e.code] = true; };
+    const onKeyUp = (e) => { keys[e.code] = false; };
+
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let hoveredMesh = null;
+
+    const onMove = (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+    renderer.domElement.addEventListener("mousemove", onMove);
+
+    const onClick = () => {
+      if (dragDistance > 6) return;
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(meshes.map((m) => m.mesh));
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        setSelected((prev) => (prev && prev.pos === hit.userData.data.pos ? null : hit.userData.data));
+      }
+    };
+    renderer.domElement.addEventListener("click", onClick);
+
+    // função exposta para focar câmera numa posição via busca
+    stateRef.current.focusCamera = (posData) => {
+      const x = ruaX[posData.rua];
+      const z = posData.col * COL_SPACING;
+      const y = BASE_LEVEL_Y + (posData.niv - 1) * LEVEL_HEIGHT + 1;
+      target.set(x, y, z);
+      spherical.radius = 6;
+      spherical.theta = Math.PI / 4;
+      spherical.phi = Math.PI / 3;
+      setMoveMode("orbit");
+    };
+
+    let animId;
+    const clock = new THREE.Clock();
+    let elapsed = 0;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      elapsed += dt;
+
+      if (moveModeRef.current === "orbit") {
+        const offset = new THREE.Vector3().setFromSpherical(spherical);
+        camera.position.copy(target).add(offset);
+        camera.lookAt(target);
+      } else {
+        const speed = (keys["ShiftLeft"] ? 8 : 4.2) * dt;
+        const forward = new THREE.Vector3(Math.sin(walk.yaw), 0, Math.cos(walk.yaw));
+        const right = new THREE.Vector3(Math.cos(walk.yaw), 0, -Math.sin(walk.yaw));
+        if (keys["KeyW"] || keys["ArrowUp"]) { walk.x -= forward.x * speed; walk.z -= forward.z * speed; }
+        if (keys["KeyS"] || keys["ArrowDown"]) { walk.x += forward.x * speed; walk.z += forward.z * speed; }
+        if (keys["KeyA"] || keys["ArrowLeft"]) { walk.x -= right.x * speed; walk.z -= right.z * speed; }
+        if (keys["KeyD"] || keys["ArrowRight"]) { walk.x += right.x * speed; walk.z += right.z * speed; }
+        camera.position.set(walk.x, walk.y, walk.z);
+        const lookDir = new THREE.Vector3(
+          -Math.sin(walk.yaw) * Math.cos(walk.pitch),
+          Math.sin(walk.pitch),
+          -Math.cos(walk.yaw) * Math.cos(walk.pitch)
+        );
+        camera.lookAt(walk.x + lookDir.x, walk.y + lookDir.y, walk.z + lookDir.z);
+      }
+
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(meshes.map((m) => m.mesh));
+      const newHover = intersects.length > 0 ? intersects[0].object : null;
+      if (newHover !== hoveredMesh) {
+        hoveredMesh = newHover;
+        mount.style.cursor = newHover ? "pointer" : (moveModeRef.current === "walk" ? "crosshair" : "grab");
+      }
+      meshes.forEach(({ mesh, data }) => {
+        const isSel = stateRef.current.selectedPos === data.pos;
+        const isHov = mesh === hoveredMesh;
+        const targetScale = isSel || isHov ? 1.12 : 1;
+        mesh.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.18);
+        mesh.material.emissiveIntensity = isSel ? 0.45 : isHov ? 0.22 : 0.08;
+      });
+
+      // pulso do alerta
+      const pulse = 0.35 + Math.sin(elapsed * 4) * 0.25;
+      alertMeshes.forEach((m) => { m.material.opacity = pulse; });
+
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const onResize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener("resize", onResize);
+
+    stateRef.current.cleanup = () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("wheel", onWheel);
+      renderer.domElement.removeEventListener("mousemove", onMove);
+      renderer.domElement.removeEventListener("click", onClick);
+      renderer.dispose();
+      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+    };
+
+    return () => stateRef.current.cleanup && stateRef.current.cleanup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions, layout]);
+
+  if (loadError) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", color: "#ff8a80", fontFamily: "system-ui", fontSize: 14, textAlign: "center", padding: 20 }}>
+        Erro ao carregar estoque.json: {loadError}<br/>Verifique se o arquivo está na mesma pasta que o index.html.
+      </div>
+    );
+  }
+  if (!positions || !layout) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", color: "#a8a29a", fontFamily: "system-ui", fontSize: 14 }}>
+        Carregando armazém...
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ width: "100%", height: "100vh", position: "relative", background: "#0d1013", fontFamily: "'Inter', system-ui, sans-serif", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "16px 20px", pointerEvents: "none" }}>
+        <div style={{ pointerEvents: "auto" }}>
+          <h1 style={{ margin: 0, fontSize: 20, color: "#f4efe6", letterSpacing: "-0.02em", fontFamily: "'JetBrains Mono', monospace" }}>ARMAZÉM 3D — IMAGINAE</h1>
+          <p style={{ margin: "2px 0 8px", fontSize: 12, color: "#a8a29a" }}>
+            {positions.length.toLocaleString("pt-BR")} posições · {totalSkus.toLocaleString("pt-BR")} lotes/SKUs · {layout.ruas.length} ruas
+            {totalAlertas > 0 && <span style={{ color: "#ff8a80" }}> · {totalAlertas} com alerta ⚠</span>}
+          </p>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar posição, cliente ou código..."
+            style={{
+              width: 260, padding: "6px 10px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.15)",
+              background: "rgba(20,24,28,0.9)", color: "#f4efe6", fontSize: 12, outline: "none",
+            }}
+          />
+          {search.trim() && (
+            <div style={{ marginTop: 4, maxHeight: 260, overflowY: "auto", background: "rgba(17,20,23,0.97)", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", width: 320 }}>
+              {searchResults.length === 0 && <div style={{ padding: 8, fontSize: 12, color: "#a8a29a" }}>Nenhum resultado</div>}
+              {searchResults.map((p) => (
+                <div key={p.pos} onClick={() => { focusOnPosition(p); setSearch(""); }} style={{
+                  padding: "6px 10px", fontSize: 12, color: "#f4efe6", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.06)",
+                }}>
+                  <strong style={{ color: "#e8a13a" }}>{p.pos}</strong> — {p.itens.length} {p.itens.length === 1 ? "item" : "itens"}
+                  {p.alerta && <span style={{ color: "#ff8a80" }}> ⚠</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ pointerEvents: "auto", display: "flex", gap: 6 }}>
+          {[["orbit", "🖱️ Órbita"], ["walk", "🚶 Andar"]].map(([mode, label]) => (
+            <button key={mode} onClick={() => setMoveMode(mode)} style={{
+              background: moveMode === mode ? "#2a6f77" : "rgba(255,255,255,0.08)",
+              color: "#f4efe6", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ position: "absolute", bottom: 16, left: 20, zIndex: 10, background: "rgba(20,24,28,0.85)", padding: "10px 14px", borderRadius: 8, fontSize: 11, color: "#a8a29a", pointerEvents: "none", maxWidth: 340 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span>Giro rápido</span>
+          <div style={{ width: 90, height: 8, borderRadius: 4, background: "linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)" }} />
+          <span>Parado há muito tempo</span>
+        </div>
+        <div>Contorno vermelho pulsante = item vencido ou danificado na posição</div>
+        <div style={{ marginTop: 6, opacity: 0.8 }}>
+          {moveMode === "orbit"
+            ? "Órbita: arraste para girar · scroll para zoom · clique num bloco"
+            : "Andar: WASD/setas para caminhar · arraste o mouse pra olhar · Shift corre · clique num bloco"}
+        </div>
+      </div>
+
+      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: moveMode === "walk" ? "crosshair" : "grab" }} />
+
+      <DetailPanel selected={selected} onClose={() => setSelected(null)} />
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<Armazem3D />);
+</script>
+</body>
+</html>
