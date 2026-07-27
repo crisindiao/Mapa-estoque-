@@ -405,11 +405,11 @@ function Armazem3D(){
       const key = text + "|" + (opts.big?1:0) + "|" + (opts.color||"");
       if(labelTextureCache.has(key)) return labelTextureCache.get(key);
       const canvas = document.createElement("canvas");
-      canvas.width = opts.big ? 160 : 96;
-      canvas.height = opts.big ? 72 : 48;
+      canvas.width = opts.big ? 320 : 96;
+      canvas.height = opts.big ? 144 : 48;
       const ctx = canvas.getContext("2d");
       ctx.fillStyle = opts.color || "#f4efe6";
-      ctx.font = "bold " + (opts.big ? 46 : 30) + "px monospace";
+      ctx.font = "bold " + (opts.big ? 96 : 30) + "px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(text, canvas.width/2, canvas.height/2);
@@ -422,7 +422,7 @@ function Armazem3D(){
       const tex = getLabelTexture(text, opts);
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent:true }));
       sprite.position.set(x,y,z);
-      sprite.scale.set(opts.big ? 1.8 : 0.85, opts.big ? 0.9 : 0.42, 1);
+      sprite.scale.set(opts.big ? 3.6 : 0.85, opts.big ? 1.62 : 0.42, 1);
       scene.add(sprite);
       return sprite;
     }
@@ -608,20 +608,23 @@ function Armazem3D(){
       if(currentModeType === "cliente")     return itens.some(it => it[0] === currentModeValue);
       return true;
     }
+    const COLOR_DIMMED = new THREE.Color(0x14171a);
     function entryHighlightColor(entry){
       if(currentModeType === "vencido" || currentModeType === "danificado") return COLOR_VENCIDO_DANIFICADO;
-      if(currentModeType === "cliente") return entry.baseColor.clone().lerp(COLOR_CLIENTE_DESTAQUE, 0.55);
+      if(currentModeType === "cliente") return COLOR_CLIENTE_DESTAQUE;
       return entry.baseColor;
     }
     function refreshEntryVisual(layer, entry){
       const isFiltering = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="cliente";
-      const visible = !isFiltering || entryMatchesMode(entry);
-      const scaleMul = visible ? (entry===hoveredEntry || entry===selectedEntry ? 1.14 : 1) : 0;
+      const matches = entryMatchesMode(entry);
+      // itens que não combinam com o filtro continuam visíveis (bem escurecidos),
+      // para dar noção geral do armazém; os que combinam ficam bem destacados
+      const scaleMul = (entry===hoveredEntry || entry===selectedEntry) ? 1.14 : 1;
       layer.writeMatrix(entry, scaleMul);
-      const baseColor = visible ? entryHighlightColor(entry) : entry.baseColor;
+      const baseColor = (isFiltering && !matches) ? COLOR_DIMMED : entryHighlightColor(entry);
       let color = baseColor;
-      if(visible && entry===selectedEntry) color = baseColor.clone().lerp(COLOR_SELECT, 0.45);
-      else if(visible && entry===hoveredEntry) color = baseColor.clone().lerp(COLOR_HOVER, 0.4);
+      if(entry===selectedEntry) color = baseColor.clone().lerp(COLOR_SELECT, 0.45);
+      else if(entry===hoveredEntry) color = baseColor.clone().lerp(COLOR_HOVER, 0.4);
       layer.mesh.setColorAt(entry.index, color);
     }
     function refreshAllVisuals(){
@@ -896,8 +899,16 @@ function Armazem3D(){
         mount.style.cursor = hoveredEntry ? "pointer" : (viewModeRef.current==="walk" ? "crosshair" : "grab");
       }
 
+      // o contorno pulsante de vencido/danificado só deve piscar quando
+      // nenhum filtro estiver ativo, ou quando o próprio filtro de
+      // vencido/danificado estiver ativo. Com outros filtros (cliente/vazio)
+      // ou dentro deles, ele fica parado/oculto para não distrair.
+      const shouldPulse = currentModeType === "none" || currentModeType === "vencido" || currentModeType === "danificado";
       const pulse = 0.35 + Math.sin(elapsed*4)*0.25;
-      alertMeshes.forEach(m=>{ m.material.opacity = pulse; });
+      alertMeshes.forEach(m=>{
+        m.visible = shouldPulse;
+        if(shouldPulse) m.material.opacity = pulse;
+      });
 
       renderer.render(scene, camera);
     };
