@@ -644,59 +644,80 @@ function Armazem3D(){
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
 
     // -----------------------------------------------------------------------
-    // Camada dedicada de DESTAQUE DE FILTRO (vencido/danificado/risco/cliente)
-    // Em vez de depender só de setColorAt em cima da malha principal, usamos
-    // uma malha extra — no mesmo padrão robusto já usado para "Vazias" — que
-    // fica oculta por padrão e só aparece com as instâncias corretas quando
-    // um filtro está ativo. Isso garante o destaque mesmo se, por qualquer
-    // razão do ambiente/driver, o recolorir da malha principal não repintar.
+    // Camadas dedicadas de DESTAQUE DE FILTRO (vencido/danificado/risco/cliente)
+    // Cada categoria tem sua PRÓPRIA malha com cor FIXA no material (mesma
+    // técnica 100% comprovada que já funciona em "Vazias"), em vez de usar
+    // setColorAt/instanceColor por cima de uma malha compartilhada. Assim
+    // não há dependência nenhuma do buffer de cor por instância.
     // -----------------------------------------------------------------------
-    function buildHighlightLayer(layer){
+    const HIGHLIGHT_CATEGORIAS = [
+      { key:"vencido",  color: COLOR_VENCIDO_DANIFICADO },
+      { key:"critico",  color: COLOR_VENCE_7D },
+      { key:"atencao",  color: COLOR_VENCE_15D },
+      { key:"cliente",  color: COLOR_CLIENTE_DESTAQUE }
+    ];
+    function buildHighlightCategoryLayer(layer, color){
       const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshBasicMaterial({ vertexColors:true, transparent:true, opacity:0.95 });
+      const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.95 });
       const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, layer.entries.length));
       mesh.frustumCulled = false;
       mesh.visible = false;
       const dummy = new THREE.Object3D();
       layer.entries.forEach((e,i)=>{
         dummy.position.set(e.x, e.y, e.z);
-        dummy.scale.set(e.boxSizeX*1.22, e.boxHeight*1.22, e.boxSizeZ*1.22);
+        dummy.scale.set(0,0,0); // começa oculto; escala é ligada em refreshHighlightLayer
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
-        mesh.setColorAt(i, COLOR_VENCIDO_DANIFICADO);
       });
       mesh.instanceMatrix.needsUpdate = true;
-      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
       return mesh;
     }
-    const mainHighlight = buildHighlightLayer(mainBoxes);
-    const ficticiaHighlight = ficticiaBoxes ? buildHighlightLayer(ficticiaBoxes) : null;
-    const highlightLayers = ficticiaHighlight ? [[mainBoxes,mainHighlight],[ficticiaBoxes,ficticiaHighlight]] : [[mainBoxes,mainHighlight]];
+    // para cada bloco (principal / fictício), cria uma malha por categoria
+    const highlightLayers = allBoxLayers.map(layer=>{
+      const byCategoria = {};
+      HIGHLIGHT_CATEGORIAS.forEach(cat=>{ byCategoria[cat.key] = buildHighlightCategoryLayer(layer, cat.color); });
+      return { boxLayer: layer, byCategoria };
+    });
+
+    // decide a que categoria de destaque uma entrada pertence, dado o modo atual
+    function entryHighlightCategoria(entry){
+      if(currentModeType === "vencido" || currentModeType === "danificado") return "vencido";
+      if(currentModeType === "risco") return entry.risco; // "vencido" | "critico" | "atencao" | null
+      if(currentModeType === "cliente") return "cliente";
+      return null;
+    }
 
     function refreshHighlightLayer(){
       const active = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="risco" || currentModeType==="cliente";
-      highlightLayers.forEach(([boxLayer, hMesh])=>{
-        hMesh.visible = active;
-        if(!active) return;
-        const dummy = new THREE.Object3D();
-        const zeroScale = new THREE.Vector3(0,0,0);
-        boxLayer.entries.forEach((e,i)=>{
-          const on = entryMatchesMode(e);
-          if(on){
-            dummy.position.set(e.x, e.y, e.z);
-            dummy.scale.set(e.boxSizeX*1.22, e.boxHeight*1.22, e.boxSizeZ*1.22);
-          } else {
-            dummy.position.set(e.x, e.y, e.z);
-            dummy.scale.copy(zeroScale);
-          }
-          dummy.updateMatrix();
-          hMesh.setMatrixAt(i, dummy.matrix);
-          const col = entryHighlightColor(e);
-          hMesh.setColorAt(i, col);
+      const dummy = new THREE.Object3D();
+      highlightLayers.forEach(({boxLayer, byCategoria})=>{
+        // zera todas as categorias primeiro
+        HIGHLIGHT_CATEGORIAS.forEach(cat=>{
+          const mesh = byCategoria[cat.key];
+          mesh.visible = active;
         });
-        hMesh.instanceMatrix.needsUpdate = true;
-        if(hMesh.instanceColor) hMesh.instanceColor.needsUpdate = true;
+        if(!active) return;
+        // acumula, por categoria, quais índices devem aparecer
+        const scalesByCat = {};
+        HIGHLIGHT_CATEGORIAS.forEach(cat=>{ scalesByCat[cat.key] = new Array(boxLayer.entries.length).fill(false); });
+        boxLayer.entries.forEach((e,i)=>{
+          if(!entryMatchesMode(e)) return;
+          const cat = entryHighlightCategoria(e);
+          if(cat && scalesByCat[cat]) scalesByCat[cat][i] = true;
+        });
+        HIGHLIGHT_CATEGORIAS.forEach(cat=>{
+          const mesh = byCategoria[cat.key];
+          const onList = scalesByCat[cat.key];
+          boxLayer.entries.forEach((e,i)=>{
+            dummy.position.set(e.x, e.y, e.z);
+            if(onList[i]) dummy.scale.set(e.boxSizeX*1.22, e.boxHeight*1.22, e.boxSizeZ*1.22);
+            else dummy.scale.set(0,0,0);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+          });
+          mesh.instanceMatrix.needsUpdate = true;
+        });
       });
     }
 
@@ -757,7 +778,6 @@ function Armazem3D(){
       if(currentModeType === "cliente")     return itens.some(it => String(it[0]||"").trim() === String(currentModeValue||"").trim());
       return true;
     }
-    const COLOR_DIMMED = new THREE.Color(0x14171a);
     const RISCO_COR_THREE = { vencido:COLOR_VENCIDO_DANIFICADO, critico:COLOR_VENCE_7D, atencao:COLOR_VENCE_15D };
     function entryHighlightColor(entry){
       if(currentModeType === "vencido" || currentModeType === "danificado") return COLOR_VENCIDO_DANIFICADO;
@@ -768,11 +788,12 @@ function Armazem3D(){
     function refreshEntryVisual(layer, entry){
       const isFiltering = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="risco" || currentModeType==="cliente";
       const matches = entryMatchesMode(entry);
-      // itens que não combinam com o filtro continuam visíveis (bem escurecidos),
-      // para dar noção geral do armazém; os que combinam ficam bem destacados
-      const scaleMul = (entry===hoveredEntry || entry===selectedEntry) ? 1.14 : 1;
+      // com filtro ativo, quem não combina some de vez (escala 0) — igual ao
+      // padrão já usado em "Vazias" — em vez de só escurecer
+      const visible = !isFiltering || matches;
+      const scaleMul = !visible ? 0 : (entry===hoveredEntry || entry===selectedEntry ? 1.14 : 1);
       layer.writeMatrix(entry, scaleMul);
-      const baseColor = (isFiltering && !matches) ? COLOR_DIMMED : entryHighlightColor(entry);
+      const baseColor = entryHighlightColor(entry);
       let color = baseColor;
       if(entry===selectedEntry) color = baseColor.clone().lerp(COLOR_SELECT, 0.45);
       else if(entry===hoveredEntry) color = baseColor.clone().lerp(COLOR_HOVER, 0.4);
