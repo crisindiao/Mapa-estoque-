@@ -749,6 +749,11 @@ function Armazem3D(){
     api.current.applyMode = (m)=>{
       currentModeType = m.type;
       currentModeValue = m.value || null;
+      console.log("[DIAG] applyMode chamado:", m.type, m.value, "| total entries:", allBoxLayers.reduce((a,l)=>a+l.entries.length,0));
+      if(m.type==="vencido" || m.type==="danificado" || m.type==="cliente"){
+        const matchCount = allBoxLayers.reduce((acc,layer)=>acc+layer.entries.filter(e=>entryMatchesMode(e)).length, 0);
+        console.log("[DIAG] posições que combinam com o filtro:", matchCount);
+      }
       emptyMesh.visible = (m.type === "vazio");
       mainBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
       if(ficticiaBoxes) ficticiaBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
@@ -765,6 +770,7 @@ function Armazem3D(){
         applyBuscaHighlight(matchSet);
       } else {
         refreshAllVisuals();
+        console.log("[DIAG] refreshAllVisuals concluído. instanceColor existe?", !!mainBoxes.mesh.instanceColor);
       }
     };
 
