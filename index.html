@@ -643,6 +643,63 @@ function Armazem3D(){
     const combinedPosIndex = new Map();
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
 
+    // -----------------------------------------------------------------------
+    // Camada dedicada de DESTAQUE DE FILTRO (vencido/danificado/risco/cliente)
+    // Em vez de depender só de setColorAt em cima da malha principal, usamos
+    // uma malha extra — no mesmo padrão robusto já usado para "Vazias" — que
+    // fica oculta por padrão e só aparece com as instâncias corretas quando
+    // um filtro está ativo. Isso garante o destaque mesmo se, por qualquer
+    // razão do ambiente/driver, o recolorir da malha principal não repintar.
+    // -----------------------------------------------------------------------
+    function buildHighlightLayer(layer){
+      const geo = new THREE.BoxGeometry(1,1,1);
+      const mat = new THREE.MeshBasicMaterial({ vertexColors:true, transparent:true, opacity:0.95 });
+      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, layer.entries.length));
+      mesh.frustumCulled = false;
+      mesh.visible = false;
+      const dummy = new THREE.Object3D();
+      layer.entries.forEach((e,i)=>{
+        dummy.position.set(e.x, e.y, e.z);
+        dummy.scale.set(e.boxSizeX*1.22, e.boxHeight*1.22, e.boxSizeZ*1.22);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        mesh.setColorAt(i, COLOR_VENCIDO_DANIFICADO);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      scene.add(mesh);
+      return mesh;
+    }
+    const mainHighlight = buildHighlightLayer(mainBoxes);
+    const ficticiaHighlight = ficticiaBoxes ? buildHighlightLayer(ficticiaBoxes) : null;
+    const highlightLayers = ficticiaHighlight ? [[mainBoxes,mainHighlight],[ficticiaBoxes,ficticiaHighlight]] : [[mainBoxes,mainHighlight]];
+
+    function refreshHighlightLayer(){
+      const active = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="risco" || currentModeType==="cliente";
+      highlightLayers.forEach(([boxLayer, hMesh])=>{
+        hMesh.visible = active;
+        if(!active) return;
+        const dummy = new THREE.Object3D();
+        const zeroScale = new THREE.Vector3(0,0,0);
+        boxLayer.entries.forEach((e,i)=>{
+          const on = entryMatchesMode(e);
+          if(on){
+            dummy.position.set(e.x, e.y, e.z);
+            dummy.scale.set(e.boxSizeX*1.22, e.boxHeight*1.22, e.boxSizeZ*1.22);
+          } else {
+            dummy.position.set(e.x, e.y, e.z);
+            dummy.scale.copy(zeroScale);
+          }
+          dummy.updateMatrix();
+          hMesh.setMatrixAt(i, dummy.matrix);
+          const col = entryHighlightColor(e);
+          hMesh.setColorAt(i, col);
+        });
+        hMesh.instanceMatrix.needsUpdate = true;
+        if(hMesh.instanceColor) hMesh.instanceColor.needsUpdate = true;
+      });
+    }
+
     // contorno pulsante para posições com risco de validade (vencido/crítico/atenção) ou danificado
     const RISCO_COR_HEX = { vencido:0xff5544, critico:0xff8c1a, atencao:0xf0c419 };
     const alertMeshes = [];
@@ -726,6 +783,7 @@ function Armazem3D(){
         layer.entries.forEach(e=>refreshEntryVisual(layer, e));
         layer.mesh.instanceMatrix.needsUpdate = true;
         if(layer.mesh.instanceColor) layer.mesh.instanceColor.needsUpdate = true;
+        layer.mesh.material.needsUpdate = true;
       });
     }
     refreshAllVisuals();
@@ -749,11 +807,6 @@ function Armazem3D(){
     api.current.applyMode = (m)=>{
       currentModeType = m.type;
       currentModeValue = m.value || null;
-      console.log("[DIAG] applyMode chamado:", m.type, m.value, "| total entries:", allBoxLayers.reduce((a,l)=>a+l.entries.length,0));
-      if(m.type==="vencido" || m.type==="danificado" || m.type==="cliente"){
-        const matchCount = allBoxLayers.reduce((acc,layer)=>acc+layer.entries.filter(e=>entryMatchesMode(e)).length, 0);
-        console.log("[DIAG] posições que combinam com o filtro:", matchCount);
-      }
       emptyMesh.visible = (m.type === "vazio");
       mainBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
       if(ficticiaBoxes) ficticiaBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
@@ -770,8 +823,8 @@ function Armazem3D(){
         applyBuscaHighlight(matchSet);
       } else {
         refreshAllVisuals();
-        console.log("[DIAG] refreshAllVisuals concluído. instanceColor existe?", !!mainBoxes.mesh.instanceColor);
       }
+      refreshHighlightLayer();
     };
 
     api.current.setSelectedByPos = (pos)=>{
