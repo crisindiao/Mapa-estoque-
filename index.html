@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Armazém 3D — Imaginae</title>
+<title>Armazém 3D</title>
 <style>
   html, body, #root { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d1013; }
   * { box-sizing: border-box; }
@@ -41,7 +41,7 @@ const POST_SIZE     = 0.12;
 const BLOCK_GAP     = 18;     // espaço entre o galpão principal e o bloco fictício
 const COLUMN_TAG_STEP = 5;    // a cada quantas colunas colocar uma plaquinha numerada
 
-const ITEM_FIELDS = ["cliente","codigo","desc","qtde","lote","validade","vencido","perecivel","danificado","giroScore"];
+const ITEM_FIELDS = ["cliente","codigo","desc","qtde","lote","validade","vencido","perecivel","danificado","giroScore","familia"];
 function itemToObj(arr){ const o = {}; ITEM_FIELDS.forEach((k,i)=>o[k]=arr[i]); return o; }
 
 /* =========================================================================
@@ -54,13 +54,32 @@ function giroColor(g){
   const out  = new THREE.Color();
   return g < 0.5 ? out.copy(fast).lerp(mid, g*2) : out.copy(mid).lerp(slow, (g-0.5)*2);
 }
-const COLOR_VENCIDO_DANIFICADO = new THREE.Color(0xe63946);
-const COLOR_VENCE_7D           = new THREE.Color(0xff8c1a); // laranja: vence em até 7 dias
-const COLOR_VENCE_15D          = new THREE.Color(0xf0c419); // amarelo: vence em até 15 dias
-const COLOR_CLIENTE_DESTAQUE   = new THREE.Color(0x8ecff5);
-const COLOR_VAZIO              = new THREE.Color(0x4fd1c5);
+const COLOR_VENCIDO_DANIFICADO = new THREE.Color(0xe63946); // vermelho sólido: vencido, danificado E a vencer (unificado a pedido)
+const COLOR_VENCE_7D           = new THREE.Color(0xff8c1a); // laranja: usado só no contorno pulsante passivo (sem filtro ativo)
+const COLOR_VENCE_15D          = new THREE.Color(0xf0c419); // amarelo: usado só no contorno pulsante passivo (sem filtro ativo)
+const COLOR_CLIENTE_DESTAQUE   = new THREE.Color(0xffd400); // amarelo sólido de destaque do filtro Cliente
+const COLOR_VAZIO              = new THREE.Color(0xffffff); // branco sólido para posições vazias
 const COLOR_HOVER              = new THREE.Color(0xffffff);
 const COLOR_SELECT             = new THREE.Color(0x2e6f77);
+const COLOR_PALLET             = new THREE.Color(0xc9a06a); // madeira do palete
+const COLOR_PAPELAO             = [ new THREE.Color(0xcaa06e), new THREE.Color(0xc2925c), new THREE.Color(0xd4b380), new THREE.Color(0xb98c56) ]; // variações de papelão
+
+// paleta do filtro Família — categorias REAIS da planilha (BRINDE, VESTUARIO,
+// DISPLAY, PRODUTO, GRÁFICO). Cores sólidas distintas, no mesmo espírito visual
+// da legenda por blocos de cor do PDF, mas aplicadas às categorias verdadeiras
+// do WMS (a planta não amarra zona sanitária a posição, então não dá pra usar
+// as cores dela sem inventar dados).
+const FAMILIA_CORES = {
+  "BRINDE":    "#2e8b57",
+  "VESTUARIO": "#c9781f",
+  "DISPLAY":   "#2255aa",
+  "PRODUTO":   "#c2298a",
+  "GRÁFICO":   "#3aa7a0",
+  "":          "#888888"
+};
+function corFamilia(fam){
+  return FAMILIA_CORES[fam] || "#888888";
+}
 
 /* =========================================================================
    ALERTA PREDITIVO DE VALIDADE
@@ -180,7 +199,8 @@ function convertErpRowsToPositions(rows){
       false,                                        // vencido: calculado pelo app a partir da validade
       isSimOuS(row["Perecivel"]),                  // perecivel
       isSimOuS(row["Danificado"]),                 // danificado
-      giroScore                                     // giroScore
+      giroScore,                                    // giroScore
+      String(row["Familia"]||"").trim()             // familia (BRINDE, VESTUARIO, DISPLAY, PRODUTO, GRÁFICO...)
     ];
     if(!byPos.has(posId)) byPos.set(posId, { pos:posId, rua, col, niv, itens:[], _giroSum:0, _giroCount:0 });
     const p = byPos.get(posId);
@@ -632,6 +652,54 @@ function InfoGalpaoPanel({ open, onClose, isMobile }){
   );
 }
 
+const PALLET_HEIGHT = 0.14;
+// quantos "níveis de empilhamento" mostrar, de acordo com quantos lotes/SKUs
+// existem na posição — é uma representação GENÉRICA (não é a caixa real),
+// só pra dar volume visual: pouco material = pouca caixa, muito material = pilha cheia.
+function tierForItemCount(n){
+  if(n<=0) return 0;
+  if(n===1) return 1;
+  if(n<=3) return 2;
+  if(n<=6) return 3;
+  return 4;
+}
+function tierTemplate(tier){
+  if(tier<=0) return [];
+  if(tier===1){
+    const sy=LEVEL_HEIGHT*0.42;
+    return [ {dx:0,dz:0,y0:sy/2, sx:RACK_DEPTH*0.5, sy, sz:COL_SPACING*0.5} ];
+  }
+  if(tier===2){
+    const sy=LEVEL_HEIGHT*0.38;
+    return [
+      {dx:-RACK_DEPTH*0.19, dz:0, y0:sy/2, sx:RACK_DEPTH*0.34, sy, sz:COL_SPACING*0.62},
+      {dx: RACK_DEPTH*0.19, dz:0, y0:sy/2, sx:RACK_DEPTH*0.34, sy, sz:COL_SPACING*0.62}
+    ];
+  }
+  if(tier===3){
+    const sy=LEVEL_HEIGHT*0.34;
+    const out=[];
+    [-1,1].forEach(sx=>[-1,1].forEach(sz=>{
+      out.push({dx:sx*RACK_DEPTH*0.19, dz:sz*COL_SPACING*0.19, y0:sy/2, sx:RACK_DEPTH*0.34, sy, sz:COL_SPACING*0.34});
+    }));
+    return out;
+  }
+  // tier 4: base 2x2 + 2 caixas no topo (pilha "cheia")
+  const sy=LEVEL_HEIGHT*0.32;
+  const out=[];
+  [-1,1].forEach(sx=>[-1,1].forEach(sz=>{
+    out.push({dx:sx*RACK_DEPTH*0.19, dz:sz*COL_SPACING*0.19, y0:sy/2, sx:RACK_DEPTH*0.34, sy, sz:COL_SPACING*0.34});
+  }));
+  [-1,1].forEach(sx=>{
+    out.push({dx:sx*RACK_DEPTH*0.19, dz:0, y0:sy*1.5, sx:RACK_DEPTH*0.34, sy, sz:COL_SPACING*0.6});
+  });
+  return out;
+}
+function tierStackHeight(tier){
+  const slots = tierTemplate(tier);
+  return slots.reduce((m,s)=>Math.max(m, s.y0+s.sy/2), 0.15);
+}
+
 /* =========================================================================
    COMPONENTE PRINCIPAL
    ========================================================================= */
@@ -893,8 +961,8 @@ function Armazem3D(){
     floor.position.set(centerX + (ficticiaLayout? (ficticiaLayout.totalWidth+BLOCK_GAP)/2 : 0), 0, centerZ);
     scene.add(floor);
 
-    const postMat = new THREE.MeshStandardMaterial({ color:0x22588a, roughness:0.4, metalness:0.6 });
-    const beamMat = new THREE.MeshStandardMaterial({ color:0xdc6d51, roughness:0.4, metalness:0.5 });
+    const postMat = new THREE.MeshStandardMaterial({ color:0x1a4fc4, roughness:0.35, metalness:0.55 });
+    const beamMat = new THREE.MeshStandardMaterial({ color:0xf07d1a, roughness:0.35, metalness:0.5 });
     const ficticioPostMat = new THREE.MeshStandardMaterial({ color:0x6a4b8a, roughness:0.4, metalness:0.6 });
     const ficticioBeamMat = new THREE.MeshStandardMaterial({ color:0x8a5a5a, roughness:0.4, metalness:0.5 });
 
@@ -1010,203 +1078,160 @@ function Armazem3D(){
     }
 
     // ---------------------------------------------------------------------
-    // Camada de caixas ocupadas (uma InstancedMesh por bloco)
-    // Cada caixa fica centralizada DENTRO da célula da posição (correção do
-    // bug em que o material ficava a cavaleiro entre duas posições).
+    // Camada de PALETES — um por posição da GRADE TEÓRICA (ocupada ou vazia)
+    // no galpão principal, e só as ocupadas no bloco fictício. É a "base"
+    // sempre visível, como se fosse andar pelo corredor vendo os paletes.
     // ---------------------------------------------------------------------
-    const hojeRef = new Date(); hojeRef.setHours(0,0,0,0);
-    function buildBoxLayer(layout){
-      const positions = layout.positions.filter(p => layout.ruaX[p.rua] !== undefined);
-      const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.5, metalness:0.1, transparent:true, opacity:1 });
-      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, positions.length));
-      mesh.frustumCulled = false;
+    function buildPalletLayer(layout, includeEmptyGrid){
+      const occupiedKeySet = new Set(layout.positions.map(p=>p.rua+"|"+p.col+"|"+p.niv));
+      let slots;
+      if(includeEmptyGrid){
+        slots = [];
+        layout.ruas.forEach(rua=>{
+          const maxCol = layout.maxColByRua[rua]||0;
+          const maxNiv = layout.maxLevelByRua[rua]||0;
+          for(let col=1; col<=maxCol; col++){
+            for(let niv=1; niv<=maxNiv; niv++){
+              slots.push({ rua, col, niv, occupied: occupiedKeySet.has(rua+"|"+col+"|"+niv) });
+            }
+          }
+        });
+      } else {
+        slots = layout.positions.map(p=>({ rua:p.rua, col:p.col, niv:p.niv, occupied:true }));
+      }
+      slots = slots.filter(s=>layout.ruaX[s.rua]!==undefined);
 
-      const entries = positions.map((p,i)=>{
-        const x = layout.ruaX[p.rua];
-        const zCenter = (p.col - 0.5) * COL_SPACING; // <-- correção: centro da célula, não a divisa
-        const itemCount = p.itens.length;
-        const boxSizeX = RACK_DEPTH*0.72;
-        const boxSizeZ = Math.min(COL_SPACING*0.82, boxSizeX*0.85);
-        const boxHeight = LEVEL_HEIGHT * (0.4 + Math.min(itemCount,10)*0.05);
-        const y = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + boxHeight/2 + 0.08;
-        const risco = riscoValidadePosicao(p.itens, hojeRef);
-        const danificado = p.itens.some(it=>isTruthy(it[8]));
-        return { data:p, index:i, x, y, z:zCenter, boxSizeX, boxSizeZ, boxHeight, baseColor: giroColor(p.giro), risco, danificado };
+      const geo = new THREE.BoxGeometry(1,1,1);
+      const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.92, metalness:0.0 });
+      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, slots.length));
+      mesh.frustumCulled = false;
+      const palletSizeX = RACK_DEPTH*0.8, palletSizeZ = COL_SPACING*0.86;
+
+      const entries = slots.map((s,i)=>{
+        const x = layout.ruaX[s.rua];
+        const z = (s.col-0.5)*COL_SPACING;
+        const y = BASE_LEVEL_Y + (s.niv-1)*LEVEL_HEIGHT + PALLET_HEIGHT/2 + 0.02;
+        return { rua:s.rua, col:s.col, niv:s.niv, occupied:s.occupied, index:i, x, y, z };
       });
 
       const dummy = new THREE.Object3D();
-      function writeMatrix(entry, scaleMul){
-        dummy.position.set(entry.x, entry.y, entry.z);
-        dummy.scale.set(entry.boxSizeX*scaleMul, entry.boxHeight*scaleMul, entry.boxSizeZ*scaleMul);
+      function writeMatrix(e, scaleMul){
+        dummy.position.set(e.x, e.y, e.z);
+        dummy.scale.set(palletSizeX*scaleMul, PALLET_HEIGHT*scaleMul, palletSizeZ*scaleMul);
         dummy.updateMatrix();
-        mesh.setMatrixAt(entry.index, dummy.matrix);
+        mesh.setMatrixAt(e.index, dummy.matrix);
       }
+      entries.forEach(e=>{ writeMatrix(e,1); mesh.setColorAt(e.index, COLOR_PALLET); });
+      mesh.instanceMatrix.needsUpdate = true;
+      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      scene.add(mesh);
+      return { mesh, entries, writeMatrix };
+    }
+
+    // ---------------------------------------------------------------------
+    // Camada de PILHAS DE CAIXAS — genérica, em cima de cada palete ocupado.
+    // Cada posição pode gerar de 1 a 6 "caixas" (instâncias), conforme a
+    // quantidade de lotes/SKUs ali, só pra dar volume visual (não é uma
+    // representação exata do item real).
+    // ---------------------------------------------------------------------
+    const hojeRef = new Date(); hojeRef.setHours(0,0,0,0);
+    function buildBoxStackLayer(layout){
+      const occupied = layout.positions.filter(p => layout.ruaX[p.rua] !== undefined);
+      const entries = occupied.map((p,i)=>{
+        const x = layout.ruaX[p.rua];
+        const z = (p.col - 0.5) * COL_SPACING;
+        const baseY = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + PALLET_HEIGHT + 0.03;
+        const itemCount = p.itens.length;
+        const risco = riscoValidadePosicao(p.itens, hojeRef);
+        const danificado = p.itens.some(it=>isTruthy(it[8]));
+        const tier = tierForItemCount(itemCount);
+        return { data:p, index:i, x, z, baseY, itemCount, risco, danificado, tier, instanceIndices:[] };
+      });
+
+      const instances = [];
       entries.forEach(e=>{
-        writeMatrix(e, 1);
-        mesh.setColorAt(e.index, e.baseColor);
+        tierTemplate(e.tier).forEach(s=>{
+          const idx = instances.length;
+          instances.push({ entry:e, dx:s.dx, dz:s.dz, y0:s.y0, sx:s.sx, sy:s.sy, sz:s.sz });
+          e.instanceIndices.push(idx);
+        });
+      });
+
+      const geo = new THREE.BoxGeometry(1,1,1);
+      const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.85, metalness:0.02 });
+      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, instances.length));
+      mesh.frustumCulled = false;
+
+      const dummy = new THREE.Object3D();
+      function writeInstance(i, scaleMul){
+        const inst = instances[i];
+        const e = inst.entry;
+        dummy.position.set(e.x+inst.dx, e.baseY+inst.y0, e.z+inst.dz);
+        dummy.scale.set(inst.sx*scaleMul, inst.sy*scaleMul, inst.sz*scaleMul);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+      instances.forEach((inst,i)=>{
+        writeInstance(i, 1);
+        mesh.setColorAt(i, COLOR_PAPELAO[i % COLOR_PAPELAO.length]);
       });
       mesh.instanceMatrix.needsUpdate = true;
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de identificação escrita em cima de CADA posição ocupada
-      // (mostra o código da posição, ex.: "A-03-02"). Para não pesar o
-      // desempenho, elas começam ocultas e só aparecem perto da câmera
-      // (ver controle de distância no loop de renderização mais abaixo).
+      // plaquinha de identificação em cima de cada pilha (mesma lógica de
+      // antes: só aparece perto da câmera, controlado no loop de renderização)
       const posLabels = [];
       entries.forEach(e=>{
-        const spr = addLabelSprite(String(e.data.pos), e.x, e.y + e.boxHeight/2 + 0.22, e.z, { color:"#1f2937" });
+        const topY = e.baseY + tierStackHeight(e.tier);
+        const spr = addLabelSprite(String(e.data.pos), e.x, topY + 0.22, e.z, { color:"#1f2937" });
         spr.visible = false;
         posLabels.push(spr);
       });
 
       const posIndex = new Map();
       entries.forEach(e=>posIndex.set(e.data.pos, e));
-      return { mesh, entries, posIndex, writeMatrix, posLabels };
+      return { mesh, entries, instances, writeInstance, posIndex, posLabels };
     }
 
-    const mainBoxes = buildBoxLayer(mainLayout);
-    const ficticiaBoxes = ficticiaLayout ? buildBoxLayer(ficticiaLayout) : null;
+    const mainPallets = buildPalletLayer(mainLayout, true);
+    const ficticiaPallets = ficticiaLayout ? buildPalletLayer(ficticiaLayout, false) : null;
+    const allPalletLayers = ficticiaPallets ? [mainPallets, ficticiaPallets] : [mainPallets];
+
+    const mainBoxes = buildBoxStackLayer(mainLayout);
+    const ficticiaBoxes = ficticiaLayout ? buildBoxStackLayer(ficticiaLayout) : null;
     const allBoxLayers = ficticiaBoxes ? [mainBoxes, ficticiaBoxes] : [mainBoxes];
     const allPosLabels = allBoxLayers.flatMap(l=>l.posLabels);
     const combinedPosIndex = new Map();
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
 
-    // -----------------------------------------------------------------------
-    // Camadas dedicadas de DESTAQUE DE FILTRO (vencido/danificado/risco/cliente)
-    // Cada categoria tem sua PRÓPRIA malha com cor FIXA no material (mesma
-    // técnica 100% comprovada que já funciona em "Vazias"), em vez de usar
-    // setColorAt/instanceColor por cima de uma malha compartilhada. Assim
-    // não há dependência nenhuma do buffer de cor por instância.
-    // -----------------------------------------------------------------------
-    const HIGHLIGHT_CATEGORIAS = [
-      { key:"vencido",  color: COLOR_VENCIDO_DANIFICADO },
-      { key:"critico",  color: COLOR_VENCE_7D },
-      { key:"atencao",  color: COLOR_VENCE_15D },
-      { key:"cliente",  color: COLOR_CLIENTE_DESTAQUE }
-    ];
-    function buildHighlightCategoryLayer(layer, color){
-      const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.95 });
-      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, layer.entries.length));
-      mesh.frustumCulled = false;
-      mesh.visible = false;
-      const dummy = new THREE.Object3D();
-      layer.entries.forEach((e,i)=>{
-        dummy.position.set(e.x, e.y, e.z);
-        dummy.scale.set(0,0,0); // começa oculto; escala é ligada em refreshHighlightLayer
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      scene.add(mesh);
-      return mesh;
-    }
-    // para cada bloco (principal / fictício), cria uma malha por categoria
-    const highlightLayers = allBoxLayers.map(layer=>{
-      const byCategoria = {};
-      HIGHLIGHT_CATEGORIAS.forEach(cat=>{ byCategoria[cat.key] = buildHighlightCategoryLayer(layer, cat.color); });
-      return { boxLayer: layer, byCategoria };
-    });
-
-    // severidade combinada de uma posição: prioriza vencido de verdade (vermelho);
-    // se estiver danificada, herda a cor "a vencer" (laranja/amarelo) quando o
-    // item também estiver perto do vencimento, senão fica vermelha por padrão;
-    // caso contrário usa só o risco de validade (crítico/atenção). Retorna
-    // "vencido" | "critico" | "atencao" | null.
+    // severidade combinada de uma posição: prioriza vencido de verdade;
+    // se estiver danificada e também perto de vencer, ainda conta como
+    // "problema" pro contorno pulsante passivo (sem filtro ativo).
     function severityOf(entry){
       if(entry.risco === "vencido") return "vencido";
-      if(entry.danificado){
-        if(entry.risco === "critico") return "critico";
-        if(entry.risco === "atencao") return "atencao";
-        return "vencido";
-      }
+      if(entry.danificado) return entry.risco || "vencido";
       return entry.risco || null;
     }
 
-    // decide a que categoria de destaque uma entrada pertence, dado o modo atual
-    function entryHighlightCategoria(entry){
-      if(currentModeType === "vencido" || currentModeType === "danificado") return severityOf(entry);
-      if(currentModeType === "risco") return entry.risco; // "vencido" | "critico" | "atencao" | null
-      if(currentModeType === "cliente") return "cliente";
-      return null;
-    }
-
-    function refreshHighlightLayer(){
-      const active = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="risco" || currentModeType==="cliente";
-      const dummy = new THREE.Object3D();
-      highlightLayers.forEach(({boxLayer, byCategoria})=>{
-        // zera todas as categorias primeiro
-        HIGHLIGHT_CATEGORIAS.forEach(cat=>{
-          const mesh = byCategoria[cat.key];
-          mesh.visible = active;
-        });
-        if(!active) return;
-        // acumula, por categoria, quais índices devem aparecer
-        const scalesByCat = {};
-        HIGHLIGHT_CATEGORIAS.forEach(cat=>{ scalesByCat[cat.key] = new Array(boxLayer.entries.length).fill(false); });
-        boxLayer.entries.forEach((e,i)=>{
-          if(!entryMatchesMode(e)) return;
-          const cat = entryHighlightCategoria(e);
-          if(cat && scalesByCat[cat]) scalesByCat[cat][i] = true;
-        });
-        HIGHLIGHT_CATEGORIAS.forEach(cat=>{
-          const mesh = byCategoria[cat.key];
-          const onList = scalesByCat[cat.key];
-          boxLayer.entries.forEach((e,i)=>{
-            dummy.position.set(e.x, e.y, e.z);
-            if(onList[i]) dummy.scale.set(e.boxSizeX*1.22, e.boxHeight*1.22, e.boxSizeZ*1.22);
-            else dummy.scale.set(0,0,0);
-            dummy.updateMatrix();
-            mesh.setMatrixAt(i, dummy.matrix);
-          });
-          mesh.instanceMatrix.needsUpdate = true;
-        });
-      });
-    }
-
     // contorno pulsante para posições com risco de validade (vencido/crítico/atenção) ou danificado
+    // — é passivo (aparece mesmo sem filtro ativo, pra chamar atenção de longe)
     const RISCO_COR_HEX = { vencido:0xff5544, critico:0xff8c1a, atencao:0xf0c419 };
     const alertMeshes = [];
     allBoxLayers.forEach(layer=>{
       layer.entries.forEach(e=>{
-        const temDanificado = e.data.itens.some(it=>isTruthy(it[8]));
-        if(!e.risco && !temDanificado) return;
+        if(!e.risco && !e.danificado) return;
         const corHex = RISCO_COR_HEX[e.risco] || 0xff5544;
-        const g = new THREE.BoxGeometry(e.boxSizeX*1.18, e.boxHeight*1.18, e.boxSizeZ*1.18);
+        const stackH = tierStackHeight(e.tier);
+        const g = new THREE.BoxGeometry(RACK_DEPTH*0.85, stackH*1.15, COL_SPACING*0.85);
         const m = new THREE.MeshBasicMaterial({ color:corHex, transparent:true, opacity:0.5, wireframe:true });
         const mesh = new THREE.Mesh(g, m);
-        mesh.position.set(e.x, e.y, e.z);
+        mesh.position.set(e.x, e.baseY + stackH/2, e.z);
         mesh.userData.risco = e.risco || "vencido";
         scene.add(mesh);
         alertMeshes.push(mesh);
       });
     });
-
-    // ---------------------------------------------------------------------
-    // Camada de posições vazias (somente galpão principal)
-    // ---------------------------------------------------------------------
-    const emptySlots = computeEmptySlots(mainLayout);
-    const emptyGeo = new THREE.BoxGeometry(1,1,1);
-    const emptyMat = new THREE.MeshBasicMaterial({ color: COLOR_VAZIO, transparent:true, opacity:0.35, wireframe:false });
-    const emptyMesh = new THREE.InstancedMesh(emptyGeo, emptyMat, Math.max(1, emptySlots.length));
-    emptyMesh.visible = false;
-    (function(){
-      const dummy = new THREE.Object3D();
-      emptySlots.forEach((slot, i)=>{
-        const x = mainLayout.ruaX[slot.rua];
-        if(x === undefined) return;
-        const z = (slot.col - 0.5) * COL_SPACING;
-        const y = BASE_LEVEL_Y + (slot.niv-1)*LEVEL_HEIGHT + (LEVEL_HEIGHT*0.35)/2 + 0.08;
-        dummy.position.set(x, y, z);
-        dummy.scale.set(RACK_DEPTH*0.6, LEVEL_HEIGHT*0.35, COL_SPACING*0.7);
-        dummy.updateMatrix();
-        emptyMesh.setMatrixAt(i, dummy.matrix);
-      });
-      emptyMesh.instanceMatrix.needsUpdate = true;
-    })();
-    scene.add(emptyMesh);
 
     /* ---------------------------------------------------------------------
        Estado de interação (hover / seleção / modo de visualização)
@@ -1221,32 +1246,31 @@ function Armazem3D(){
       if(currentModeType === "danificado")  return itens.some(it => isTruthy(it[8]));
       if(currentModeType === "risco")       return !!entry.risco;
       if(currentModeType === "cliente")     return itens.some(it => String(it[0]||"").trim() === String(currentModeValue||"").trim());
+      if(currentModeType === "familia")     return itens.some(it => String(it[10]||"").trim() === String(currentModeValue||"").trim());
       return true;
     }
-    const RISCO_COR_THREE = { vencido:COLOR_VENCIDO_DANIFICADO, critico:COLOR_VENCE_7D, atencao:COLOR_VENCE_15D };
+    const FILTER_MODES = ["vencido","danificado","risco","cliente","familia"];
+    // cor SÓLIDA (sem opacidade/mistura) de destaque do filtro ativo — null
+    // significa "usar a cor padrão de papelão" (sem filtro).
     function entryHighlightColor(entry){
-      if(currentModeType === "vencido" || currentModeType === "danificado") return RISCO_COR_THREE[severityOf(entry)] || COLOR_VENCIDO_DANIFICADO;
-      if(currentModeType === "risco") return RISCO_COR_THREE[entry.risco] || COLOR_VENCIDO_DANIFICADO;
+      if(currentModeType === "vencido" || currentModeType === "danificado" || currentModeType === "risco") return COLOR_VENCIDO_DANIFICADO;
       if(currentModeType === "cliente") return COLOR_CLIENTE_DESTAQUE;
-      // sem filtro ativo: posição com problema (vencida, a vencer ou danificada)
-      // já aparece com a caixa inteira na cor de alerta, não só com o contorno.
-      const sev = severityOf(entry);
-      if(sev) return RISCO_COR_THREE[sev] || COLOR_VENCIDO_DANIFICADO;
-      return entry.baseColor;
+      if(currentModeType === "familia") return new THREE.Color(corFamilia(currentModeValue));
+      return null;
     }
     function refreshEntryVisual(layer, entry){
-      const isFiltering = currentModeType==="vencido" || currentModeType==="danificado" || currentModeType==="risco" || currentModeType==="cliente";
+      const isFiltering = FILTER_MODES.includes(currentModeType);
       const matches = entryMatchesMode(entry);
-      // com filtro ativo, quem não combina some de vez (escala 0) — igual ao
-      // padrão já usado em "Vazias" — em vez de só escurecer
       const visible = !isFiltering || matches;
       const scaleMul = !visible ? 0 : (entry===hoveredEntry || entry===selectedEntry ? 1.14 : 1);
-      layer.writeMatrix(entry, scaleMul);
-      const baseColor = entryHighlightColor(entry);
-      let color = baseColor;
-      if(entry===selectedEntry) color = baseColor.clone().lerp(COLOR_SELECT, 0.45);
-      else if(entry===hoveredEntry) color = baseColor.clone().lerp(COLOR_HOVER, 0.4);
-      layer.mesh.setColorAt(entry.index, color);
+      const highlightColor = entryHighlightColor(entry);
+      entry.instanceIndices.forEach(i=>{
+        layer.writeInstance(i, scaleMul);
+        let color = highlightColor ? highlightColor.clone() : COLOR_PAPELAO[i % COLOR_PAPELAO.length].clone();
+        if(entry===selectedEntry) color = color.lerp(COLOR_SELECT, 0.45);
+        else if(entry===hoveredEntry) color = color.lerp(COLOR_HOVER, 0.4);
+        layer.mesh.setColorAt(i, color);
+      });
     }
     function refreshAllVisuals(){
       allBoxLayers.forEach(layer=>{
@@ -1258,17 +1282,36 @@ function Armazem3D(){
     }
     refreshAllVisuals();
 
+    // paletes: fora do filtro "vazio", ficam todos visíveis na cor de madeira.
+    // Com "vazio" ativo, só as posições realmente vazias da grade ficam em
+    // branco sólido e em destaque; as ocupadas somem.
+    function refreshPalletVisuals(){
+      const vazioAtivo = currentModeType === "vazio";
+      allPalletLayers.forEach(layer=>{
+        layer.entries.forEach(e=>{
+          const visible = !vazioAtivo || !e.occupied;
+          layer.writeMatrix(e, visible ? 1 : 0);
+          layer.mesh.setColorAt(e.index, (vazioAtivo && !e.occupied) ? COLOR_VAZIO : COLOR_PALLET);
+        });
+        layer.mesh.instanceMatrix.needsUpdate = true;
+        if(layer.mesh.instanceColor) layer.mesh.instanceColor.needsUpdate = true;
+      });
+    }
+    refreshPalletVisuals();
+
     // destaque de busca livre (não oculta, só realça e escurece o resto)
     function applyBuscaHighlight(matchSet){
       allBoxLayers.forEach(layer=>{
         layer.entries.forEach(e=>{
           const isMatch = matchSet && matchSet.has(e.data.pos);
-          let color = e.baseColor;
-          if(matchSet){
-            color = isMatch ? e.baseColor.clone().lerp(COLOR_HOVER, 0.5) : e.baseColor.clone().lerp(new THREE.Color(0x1a1d20), 0.75);
-          }
-          if(e===selectedEntry) color = color.clone().lerp(COLOR_SELECT, 0.45);
-          layer.mesh.setColorAt(e.index, color);
+          e.instanceIndices.forEach(i=>{
+            let color = COLOR_PAPELAO[i % COLOR_PAPELAO.length].clone();
+            if(matchSet){
+              color = isMatch ? color.lerp(COLOR_HOVER, 0.5) : color.lerp(new THREE.Color(0x1a1d20), 0.6);
+            }
+            if(e===selectedEntry) color = color.lerp(COLOR_SELECT, 0.45);
+            layer.mesh.setColorAt(i, color);
+          });
         });
         layer.mesh.instanceColor && (layer.mesh.instanceColor.needsUpdate = true);
       });
@@ -1277,9 +1320,6 @@ function Armazem3D(){
     api.current.applyMode = (m)=>{
       currentModeType = m.type;
       currentModeValue = m.value || null;
-      emptyMesh.visible = (m.type === "vazio");
-      mainBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
-      if(ficticiaBoxes) ficticiaBoxes.mesh.material.opacity = (m.type === "vazio") ? 0.22 : 1;
       if(m.type === "busca"){
         refreshAllVisuals();
         const q = m.value.toUpperCase();
@@ -1294,7 +1334,7 @@ function Armazem3D(){
       } else {
         refreshAllVisuals();
       }
-      refreshHighlightLayer();
+      refreshPalletVisuals();
     };
 
     api.current.setSelectedByPos = (pos)=>{
