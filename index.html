@@ -614,7 +614,8 @@ function Armazem3D(){
         const boxHeight = LEVEL_HEIGHT * (0.4 + Math.min(itemCount,10)*0.05);
         const y = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + boxHeight/2 + 0.08;
         const risco = riscoValidadePosicao(p.itens, hojeRef);
-        return { data:p, index:i, x, y, z:zCenter, boxSizeX, boxSizeZ, boxHeight, baseColor: giroColor(p.giro), risco };
+        const danificado = p.itens.some(it=>isTruthy(it[8]));
+        return { data:p, index:i, x, y, z:zCenter, boxSizeX, boxSizeZ, boxHeight, baseColor: giroColor(p.giro), risco, danificado };
       });
 
       const dummy = new THREE.Object3D();
@@ -631,6 +632,13 @@ function Armazem3D(){
       mesh.instanceMatrix.needsUpdate = true;
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
+
+      // plaquinha de identificação escrita em cima de CADA posição ocupada
+      // (mostra o código da posição, ex.: "A-03-02"), para localizar
+      // qualquer caixa sem precisar clicar nela.
+      entries.forEach(e=>{
+        addLabelSprite(String(e.data.pos), e.x, e.y + e.boxHeight/2 + 0.22, e.z, { color:"#eef2f0" });
+      });
 
       const posIndex = new Map();
       entries.forEach(e=>posIndex.set(e.data.pos, e));
@@ -680,9 +688,24 @@ function Armazem3D(){
       return { boxLayer: layer, byCategoria };
     });
 
+    // severidade combinada de uma posição: prioriza vencido de verdade (vermelho);
+    // se estiver danificada, herda a cor "a vencer" (laranja/amarelo) quando o
+    // item também estiver perto do vencimento, senão fica vermelha por padrão;
+    // caso contrário usa só o risco de validade (crítico/atenção). Retorna
+    // "vencido" | "critico" | "atencao" | null.
+    function severityOf(entry){
+      if(entry.risco === "vencido") return "vencido";
+      if(entry.danificado){
+        if(entry.risco === "critico") return "critico";
+        if(entry.risco === "atencao") return "atencao";
+        return "vencido";
+      }
+      return entry.risco || null;
+    }
+
     // decide a que categoria de destaque uma entrada pertence, dado o modo atual
     function entryHighlightCategoria(entry){
-      if(currentModeType === "vencido" || currentModeType === "danificado") return "vencido";
+      if(currentModeType === "vencido" || currentModeType === "danificado") return severityOf(entry);
       if(currentModeType === "risco") return entry.risco; // "vencido" | "critico" | "atencao" | null
       if(currentModeType === "cliente") return "cliente";
       return null;
@@ -780,9 +803,13 @@ function Armazem3D(){
     }
     const RISCO_COR_THREE = { vencido:COLOR_VENCIDO_DANIFICADO, critico:COLOR_VENCE_7D, atencao:COLOR_VENCE_15D };
     function entryHighlightColor(entry){
-      if(currentModeType === "vencido" || currentModeType === "danificado") return COLOR_VENCIDO_DANIFICADO;
+      if(currentModeType === "vencido" || currentModeType === "danificado") return RISCO_COR_THREE[severityOf(entry)] || COLOR_VENCIDO_DANIFICADO;
       if(currentModeType === "risco") return RISCO_COR_THREE[entry.risco] || COLOR_VENCIDO_DANIFICADO;
       if(currentModeType === "cliente") return COLOR_CLIENTE_DESTAQUE;
+      // sem filtro ativo: posição com problema (vencida, a vencer ou danificada)
+      // já aparece com a caixa inteira na cor de alerta, não só com o contorno.
+      const sev = severityOf(entry);
+      if(sev) return RISCO_COR_THREE[sev] || COLOR_VENCIDO_DANIFICADO;
       return entry.baseColor;
     }
     function refreshEntryVisual(layer, entry){
