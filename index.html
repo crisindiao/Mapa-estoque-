@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Armazém 3D</title>
+<title>Armazém 3D — Imaginae</title>
 <style>
   html, body, #root { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d1013; }
   * { box-sizing: border-box; }
@@ -861,10 +861,10 @@ function Armazem3D(){
     const width = mount.clientWidth, height = mount.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0d1013);
+    scene.background = new THREE.Color(0xf2f1ec);
     const totalWidthAll = mainLayout.totalWidth + (ficticiaLayout ? BLOCK_GAP + ficticiaLayout.totalWidth : 0);
     const totalDepthAll = Math.max(mainLayout.totalDepth, ficticiaLayout ? ficticiaLayout.totalDepth : 0);
-    scene.fog = new THREE.Fog(0x0d1013, 30, 130);
+    scene.fog = new THREE.Fog(0xf2f1ec, 55, 180);
 
     const centerX = mainLayout.totalWidth/2 - mainLayout.corridorSpanX/2;
     const centerZ = mainLayout.totalDepth/2;
@@ -879,15 +879,15 @@ function Armazem3D(){
     renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 1.5));
     mount.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    const dirLight = new THREE.DirectionalLight(0xffdba0, 1.05);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
     dirLight.position.set(centerX+25, 35, centerZ+18);
     scene.add(dirLight);
-    scene.add(new THREE.HemisphereLight(0x88aaea, 0x1a175a, 0.45));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xcfd6d6, 0.6));
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(totalWidthAll+30, totalDepthAll+30),
-      new THREE.MeshStandardMaterial({ color:0x222b2b, roughness:0.95 })
+      new THREE.MeshStandardMaterial({ color:0xf7f6f2, roughness:0.9 })
     );
     floor.rotation.x = -Math.PI/2;
     floor.position.set(centerX + (ficticiaLayout? (ficticiaLayout.totalWidth+BLOCK_GAP)/2 : 0), 0, centerZ);
@@ -985,13 +985,13 @@ function Armazem3D(){
         }
 
         // plaquinha da rua, sempre no início da sequência (antes da coluna 1)
-        addLabelSprite(rua, x, rackTopY+0.7, -1.4, { big:true, color: opts.ficticio ? "#d9a4ff" : "#f4efe6" });
+        addLabelSprite(rua, x, rackTopY+0.7, -1.4, { big:true, color: opts.ficticio ? "#7a2fb0" : "#1c2b3a" });
 
         // plaquinhas numeradas ao longo da coluna, no início de cada posição
         if(!opts.ficticio){
           for(let col=1; col<=maxCol; col+=COLUMN_TAG_STEP){
             const zStart = (col-1)*COL_SPACING;
-            addLabelSprite(String(col).padStart(2,"0"), x, 0.28, zStart+0.05, { color:"#c9a24a" });
+            addLabelSprite(String(col).padStart(2,"0"), x, 0.28, zStart+0.05, { color:"#8a6512" });
           }
         }
       });
@@ -1056,7 +1056,7 @@ function Armazem3D(){
       // (ver controle de distância no loop de renderização mais abaixo).
       const posLabels = [];
       entries.forEach(e=>{
-        const spr = addLabelSprite(String(e.data.pos), e.x, e.y + e.boxHeight/2 + 0.22, e.z, { color:"#eef2f0" });
+        const spr = addLabelSprite(String(e.data.pos), e.x, e.y + e.boxHeight/2 + 0.22, e.z, { color:"#1f2937" });
         spr.visible = false;
         posLabels.push(spr);
       });
