@@ -14,6 +14,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="root">
@@ -114,6 +115,200 @@ function riscoValidadePosicao(itens, hoje){
     if(r && (!pior || ordem[r] > ordem[pior])) pior = r;
   });
   return pior;
+}
+
+/* =========================================================================
+   IMPORTAÇÃO DE PLANILHA DO ERP (.xls / .xlsx / .csv)
+   O usuário seleciona o arquivo que sempre sobe pra atualizar o saldo; aqui a
+   gente lê ele no próprio navegador (via SheetJS) e converte cada linha
+   (item/lote) para o formato que o app já usa: um array de POSIÇÕES, cada
+   uma com sua lista de itens.
+   ========================================================================= */
+// aceita "Sim"/"S" (com ou sem acento/maiúscula) como verdadeiro
+function isSimOuS(v){
+  return String(v||"").trim().toLowerCase().startsWith("s");
+}
+// converte célula de data (Date do SheetJS ou texto) para "AAAA-MM-DD".
+// A planilha do ERP exporta datas no padrão americano MM/DD/AAAA (confirmado
+// pelos exemplos com dia > 12, ex.: 10/31/2026), por isso a leitura de texto
+// assume MM/DD/AAAA. Se um dia vier trocado, é só avisar que eu ajusto.
+function erpDateToIso(val){
+  if(val instanceof Date && !isNaN(val)){
+    const y=val.getFullYear(), m=String(val.getMonth()+1).padStart(2,"0"), d=String(val.getDate()).padStart(2,"0");
+    return y+"-"+m+"-"+d;
+  }
+  const s = String(val||"").trim();
+  if(!s) return "";
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); // MM/DD/AAAA
+  if(m) return m[3]+"-"+m[1].padStart(2,"0")+"-"+m[2].padStart(2,"0");
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); // já em ISO
+  if(m) return m[1]+"-"+m[2].padStart(2,"0")+"-"+m[3].padStart(2,"0");
+  return "";
+}
+// extrai o primeiro número de um texto (ex.: " '11" -> 11)
+function parseIntLoose(v){
+  const m = String(v||"").match(/\d+/);
+  return m ? parseInt(m[0],10) : 0;
+}
+// junta as linhas (uma por item/lote) em posições, no formato { pos, rua,
+// col, niv, giro, itens:[[...]] } que o resto do app já espera
+function convertErpRowsToPositions(rows){
+  const byPos = new Map();
+  rows.forEach(row=>{
+    const posId = String(row["id_posicao"]||"").trim();
+    if(!posId) return;
+    let rua = String(row["pratel_en"]||"").trim();
+    let col = parseIntLoose(row["coluna_en"]);
+    let niv = parseIntLoose(row["altura_en"]);
+    if(!rua || !col || !niv){
+      const parts = posId.split(".");
+      if(parts.length>=3){
+        rua = rua || parts[0];
+        col = col || parseInt(parts[1],10) || 0;
+        niv = niv || parseInt(parts[2],10) || 0;
+      }
+    }
+    const diasSemMov = parseFloat(row["Dias sem Mov Fiscal"]) || 0;
+    const giroScore = Math.min(1, diasSemMov/365); // >=365 dias parado = giro 1 (bem lento)
+    const item = [
+      String(row["cod_cli"]||"").trim(),         // cliente
+      String(row["Codigo"]||"").trim(),           // codigo
+      String(row["descricao"]||"").trim(),        // desc
+      parseFloat(row["Qtde"]) || 0,                // qtde
+      String(row["cod_lot_fm"]||"").trim(),        // lote
+      erpDateToIso(row["dat_val_fm"]),             // validade (ISO)
+      false,                                        // vencido: calculado pelo app a partir da validade
+      isSimOuS(row["Perecivel"]),                  // perecivel
+      isSimOuS(row["Danificado"]),                 // danificado
+      giroScore                                     // giroScore
+    ];
+    if(!byPos.has(posId)) byPos.set(posId, { pos:posId, rua, col, niv, itens:[], _giroSum:0, _giroCount:0 });
+    const p = byPos.get(posId);
+    p.itens.push(item);
+    p._giroSum += giroScore;
+    p._giroCount++;
+  });
+  return Array.from(byPos.values()).map(p=>({
+    pos:p.pos, rua:p.rua, col:p.col, niv:p.niv,
+    giro: p._giroCount ? p._giroSum/p._giroCount : 0,
+    itens: p.itens
+  }));
+}
+// lê o arquivo selecionado (.xls/.xlsx/.csv) e devolve o array de posições pronto
+async function readErpFile(file){
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type:"array", cellDates:true });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval:"", raw:true });
+  const positions = convertErpRowsToPositions(rows);
+  if(!positions.length) throw new Error("Nenhuma posição válida encontrada nessa planilha.");
+  return positions;
+}
+
+/* =========================================================================
+   IA DO ESTOQUE (Gemini, grátis)
+   Em vez de mandar o estoque inteiro (pode ter dezenas de milhares de itens)
+   pro modelo, a gente manda um RESUMO agregado (totais, top clientes, ruas)
+   mais, se a pergunta citar uma posição ou código de cliente específico, os
+   dados detalhados só daquele recorte. Isso mantém a resposta rápida e
+   barata mesmo no plano gratuito.
+   ========================================================================= */
+function buildEstoqueSummary(data){
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  let totalItens = 0, vencidos = 0, criticos = 0, atencao = 0, danificados = 0;
+  const porCliente = new Map();
+  const porRua = new Map();
+  data.forEach(p=>{
+    porRua.set(p.rua, (porRua.get(p.rua)||0) + 1);
+    p.itens.forEach(it=>{
+      totalItens++;
+      const obj = itemToObj(it);
+      const cli = String(obj.cliente||"").trim() || "(sem cliente)";
+      if(!porCliente.has(cli)) porCliente.set(cli, { cliente:cli, itens:0, qtde:0, vencidos:0, danificados:0 });
+      const c = porCliente.get(cli);
+      c.itens++; c.qtde += Number(obj.qtde)||0;
+      const risco = riscoValidadeItem(it, hoje);
+      if(risco === "vencido"){ vencidos++; c.vencidos++; }
+      else if(risco === "critico") criticos++;
+      else if(risco === "atencao") atencao++;
+      if(isTruthy(obj.danificado)){ danificados++; c.danificados++; }
+    });
+  });
+  const topClientes = Array.from(porCliente.values()).sort((a,b)=>b.itens-a.itens).slice(0,15);
+  const ruas = Array.from(porRua.entries()).map(([rua,posicoesOcupadas])=>({rua,posicoesOcupadas}));
+  return {
+    totalPosicoes: data.length, totalItens,
+    itensVencidos: vencidos, itensVenceEm7Dias: criticos, itensVenceEm15Dias: atencao,
+    itensDanificados: danificados,
+    topClientesPorQtdItens: topClientes,
+    posicoesOcupadasPorRua: ruas
+  };
+}
+// se a pergunta citar um código de posição ou de cliente que existe nos
+// dados, devolve só aquele recorte (evita ter que mandar tudo)
+function findRelevantSlice(data, question){
+  const tokens = String(question||"").toUpperCase().match(/[A-Z0-9.\-]{3,}/g) || [];
+  if(!tokens.length) return null;
+  const tokenSet = new Set(tokens);
+  const posMatches = data.filter(p=>tokenSet.has(String(p.pos).toUpperCase()));
+  if(posMatches.length){
+    return { tipo:"posicoes", dados: posMatches.slice(0,10).map(p=>({
+      pos:p.pos, rua:p.rua, col:p.col, niv:p.niv, itens:p.itens.map(itemToObj)
+    })) };
+  }
+  const clienteMatches = [];
+  data.forEach(p=>{
+    p.itens.forEach(it=>{
+      const obj = itemToObj(it);
+      if(tokenSet.has(String(obj.cliente||"").toUpperCase())){
+        clienteMatches.push({ pos:p.pos, rua:p.rua, ...obj });
+      }
+    });
+  });
+  if(clienteMatches.length) return { tipo:"itensDoCliente", dados: clienteMatches.slice(0,60) };
+  return null;
+}
+// tenta vários modelos do Gemini em sequência: se um não existir/estiver
+// indisponível (ex.: descontinuado), cai pro próximo automaticamente
+const GEMINI_MODEL_CANDIDATES = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-3-flash-preview",
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash"
+];
+async function askGeminiSobreEstoque(apiKey, question, summary, slice){
+  const promptText =
+    "Você é um especialista em gestão de estoque e armazenagem. Responda em português do Brasil, " +
+    "de forma direta e objetiva (poucos parágrafos ou uma lista curta). Baseie-se SOMENTE nos dados " +
+    "abaixo. Se não der pra responder com esses dados, diga isso claramente em vez de inventar números.\n\n" +
+    "RESUMO GERAL DO ESTOQUE (JSON):\n" + JSON.stringify(summary) + "\n\n" +
+    (slice ? "DADOS ESPECÍFICOS RELACIONADOS À PERGUNTA (JSON):\n" + JSON.stringify(slice) + "\n\n" : "") +
+    "PERGUNTA: " + question;
+
+  let lastError = null;
+  for(const model of GEMINI_MODEL_CANDIDATES){
+    try{
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+        {
+          method: "POST",
+          headers: { "Content-Type":"application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
+        }
+      );
+      if(!res.ok){ lastError = model + ": HTTP " + res.status; continue; }
+      const json = await res.json();
+      const text = json && json.candidates && json.candidates[0] && json.candidates[0].content &&
+        json.candidates[0].content.parts && json.candidates[0].content.parts[0] &&
+        json.candidates[0].content.parts[0].text;
+      if(text) return { text, model };
+      lastError = model + ": resposta vazia";
+    }catch(e){
+      lastError = model + ": " + (e.message||e);
+    }
+  }
+  throw new Error("Nenhum modelo do Gemini respondeu. Último erro: " + lastError);
 }
 
 /* =========================================================================
@@ -299,6 +494,61 @@ function Armazem3D(){
   // modo único de visualização: busca livre, cliente, vencidos, danificados ou vazios
   const [mode, setMode] = useState({ type:"none" });
   const [searchText, setSearchText] = useState("");
+  // estado da importação manual da planilha do ERP (.xls/.xlsx/.csv)
+  const [importStatus, setImportStatus] = useState(null); // { state:"loading"|"success"|"error", ... }
+
+  const handleErpFileSelected = async (file)=>{
+    if(!file) return;
+    setImportStatus({ state:"loading" });
+    try{
+      const positions = await readErpFile(file);
+      const totalItens = positions.reduce((acc,p)=>acc+p.itens.length, 0);
+      setError(null);
+      setData(positions);
+      setImportStatus({ state:"success", posCount:positions.length, itemCount:totalItens, at:new Date() });
+    }catch(e){
+      setImportStatus({ state:"error", message: e.message || String(e) });
+    }
+  };
+
+  // --- IA do estoque (Gemini) ---
+  const [geminiKey, setGeminiKey] = useState(()=>{
+    try{ return localStorage.getItem("gemini_api_key") || ""; }catch(e){ return ""; }
+  });
+  const [geminiKeyInput, setGeminiKeyInput] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]); // { role:"user"|"ia"|"erro", text, model? }
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+
+  const saveGeminiKey = ()=>{
+    const k = geminiKeyInput.trim();
+    if(!k) return;
+    setGeminiKey(k);
+    try{ localStorage.setItem("gemini_api_key", k); }catch(e){}
+    setGeminiKeyInput("");
+  };
+  const forgetGeminiKey = ()=>{
+    setGeminiKey("");
+    try{ localStorage.removeItem("gemini_api_key"); }catch(e){}
+  };
+  const sendChatMessage = async ()=>{
+    const q = chatInput.trim();
+    if(!q || !geminiKey || chatLoading || !data) return;
+    setChatMessages(m=>[...m, { role:"user", text:q }]);
+    setChatInput("");
+    setChatLoading(true);
+    try{
+      const summary = buildEstoqueSummary(data);
+      const slice = findRelevantSlice(data, q);
+      const { text, model } = await askGeminiSobreEstoque(geminiKey, q, summary, slice);
+      setChatMessages(m=>[...m, { role:"ia", text, model }]);
+    }catch(e){
+      setChatMessages(m=>[...m, { role:"erro", text: e.message || String(e) }]);
+    }finally{
+      setChatLoading(false);
+    }
+  };
 
   useEffect(()=>{
     let cancelled = false;
@@ -634,20 +884,25 @@ function Armazem3D(){
       scene.add(mesh);
 
       // plaquinha de identificação escrita em cima de CADA posição ocupada
-      // (mostra o código da posição, ex.: "A-03-02"), para localizar
-      // qualquer caixa sem precisar clicar nela.
+      // (mostra o código da posição, ex.: "A-03-02"). Para não pesar o
+      // desempenho, elas começam ocultas e só aparecem perto da câmera
+      // (ver controle de distância no loop de renderização mais abaixo).
+      const posLabels = [];
       entries.forEach(e=>{
-        addLabelSprite(String(e.data.pos), e.x, e.y + e.boxHeight/2 + 0.22, e.z, { color:"#eef2f0" });
+        const spr = addLabelSprite(String(e.data.pos), e.x, e.y + e.boxHeight/2 + 0.22, e.z, { color:"#eef2f0" });
+        spr.visible = false;
+        posLabels.push(spr);
       });
 
       const posIndex = new Map();
       entries.forEach(e=>posIndex.set(e.data.pos, e));
-      return { mesh, entries, posIndex, writeMatrix };
+      return { mesh, entries, posIndex, writeMatrix, posLabels };
     }
 
     const mainBoxes = buildBoxLayer(mainLayout);
     const ficticiaBoxes = ficticiaLayout ? buildBoxLayer(ficticiaLayout) : null;
     const allBoxLayers = ficticiaBoxes ? [mainBoxes, ficticiaBoxes] : [mainBoxes];
+    const allPosLabels = allBoxLayers.flatMap(l=>l.posLabels);
     const combinedPosIndex = new Map();
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
 
@@ -1060,6 +1315,8 @@ function Armazem3D(){
     let rafId;
     const clock = new THREE.Clock();
     let elapsed = 0;
+    const LABEL_VISIBLE_DIST2 = 13*13; // só mostra a plaquinha da posição perto da câmera
+    let labelCullCounter = 0;
     const animate = ()=>{
       rafId = requestAnimationFrame(animate);
       const dt = Math.min(clock.getDelta(), 0.05);
@@ -1110,6 +1367,18 @@ function Armazem3D(){
         m.visible = shouldPulse;
         if(shouldPulse) m.material.opacity = pulse;
       });
+
+      // plaquinhas de identificação: só ficam visíveis perto da câmera
+      // (recalculado a cada poucos quadros, não em todo frame, para custar
+      // menos processamento)
+      labelCullCounter++;
+      if(labelCullCounter % 6 === 0){
+        const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+        allPosLabels.forEach(spr=>{
+          const dx = spr.position.x-cx, dy = spr.position.y-cy, dz = spr.position.z-cz;
+          spr.visible = (dx*dx + dy*dy + dz*dz) < LABEL_VISIBLE_DIST2;
+        });
+      }
 
       renderer.render(scene, camera);
     };
@@ -1205,8 +1474,21 @@ function Armazem3D(){
           h("button", { onClick:()=>toggleMode("vazio"), style: filterBtnStyle(mode.type==="vazio", "#2a9d8f") }, "\u25A2 Vazias"),
           mode.type!=="none" && h("button", { onClick:()=>{ setSearchText(""); setMode({type:"none"}); },
             style:{ padding:"6px 10px", borderRadius:6, border:"1px solid rgba(255,255,255,0.15)",
-            background:"rgba(255,255,255,0.06)", color:"#a8a29a", fontSize:12, cursor:"pointer" } }, "Limpar")
+            background:"rgba(255,255,255,0.06)", color:"#a8a29a", fontSize:12, cursor:"pointer" } }, "Limpar"),
+
+          h("label", { style:{ padding:"6px 12px", borderRadius:6, border:"1px solid rgba(142,207,245,0.4)",
+            background: importStatus && importStatus.state==="loading" ? "rgba(142,207,245,0.25)" : "rgba(142,207,245,0.12)",
+            color:"#8ecff5", fontSize:12, fontWeight:600, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6 } },
+            importStatus && importStatus.state==="loading" ? "Lendo planilha..." : "\u2B06 Atualizar planilha (ERP)",
+            h("input", { type:"file", accept:".xls,.xlsx,.csv", style:{ display:"none" },
+              onChange:(e)=>{ const f = e.target.files && e.target.files[0]; handleErpFileSelected(f); e.target.value = ""; } }))
         ),
+
+        importStatus && importStatus.state==="success" && h("div", { style:{ fontSize:11, color:"#7fd99a", marginBottom:6 } },
+          "\u2713 Planilha atualizada \u00e0s ", importStatus.at.toLocaleTimeString("pt-BR"), " \u2014 ",
+          importStatus.posCount.toLocaleString("pt-BR"), " posições, ", importStatus.itemCount.toLocaleString("pt-BR"), " itens"),
+        importStatus && importStatus.state==="error" && h("div", { style:{ fontSize:11, color:"#ff8a80", marginBottom:6 } },
+          "\u26A0 Erro ao ler a planilha: ", importStatus.message),
 
         modeLabel && h("div", { style:{ marginTop:6, maxHeight:280, overflowY:"auto", background:"rgba(17,20,23,0.97)",
           borderRadius:6, border:"1px solid rgba(255,255,255,0.1)", width:320 } },
@@ -1283,7 +1565,62 @@ function Armazem3D(){
         h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyD") }, "\u25B6")),
       h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr")),
 
-    h(DetailPanel, { selected, onClose:()=>setSelected(null) })
+    h(DetailPanel, { selected, onClose:()=>setSelected(null) }),
+
+    // --- IA do estoque (Gemini) : botão flutuante + painel de chat ---
+    h("button", {
+      onClick:()=>setChatOpen(o=>!o),
+      style:{ position:"absolute", bottom:16, right:16, zIndex:12, width:52, height:52, borderRadius:"50%",
+        border:"1px solid rgba(142,207,245,0.5)", background: chatOpen ? "#2e6f77" : "rgba(20,24,28,0.92)",
+        color:"#8ecff5", fontSize:22, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }
+    }, "\u{1F916}"),
+
+    chatOpen && h("div", { style:{ position:"absolute", bottom:76, right:16, zIndex:12, width:320, maxWidth:"90vw",
+      maxHeight:"60vh", background:"rgba(17,20,23,0.98)", border:"1px solid rgba(142,207,245,0.3)", borderRadius:10,
+      display:"flex", flexDirection:"column", overflow:"hidden", boxShadow:"0 8px 24px rgba(0,0,0,0.5)" } },
+
+      h("div", { style:{ padding:"10px 12px", borderBottom:"1px solid rgba(255,255,255,0.08)", display:"flex",
+        alignItems:"center", justifyContent:"space-between" } },
+        h("strong", { style:{ fontSize:13, color:"#8ecff5" } }, "\u{1F916} IA do Estoque"),
+        h("button", { onClick:()=>setChatOpen(false), style:{ background:"none", border:"none", color:"#a8a29a",
+          fontSize:16, cursor:"pointer" } }, "\u2715")),
+
+      !geminiKey ? h("div", { style:{ padding:12, fontSize:12, color:"#a8a29a", display:"flex", flexDirection:"column", gap:8 } },
+        h("div", null, "Cole sua chave gratuita da API do Gemini (pegue em ",
+          h("a", { href:"https://aistudio.google.com/apikey", target:"_blank", rel:"noopener noreferrer",
+            style:{ color:"#8ecff5" } }, "aistudio.google.com/apikey"), "). Fica salva só nesse navegador."),
+        h("input", { type:"password", value:geminiKeyInput, onChange:(e)=>setGeminiKeyInput(e.target.value),
+          placeholder:"AIza...", style:{ padding:"6px 8px", borderRadius:6, border:"1px solid rgba(255,255,255,0.15)",
+          background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" } }),
+        h("button", { onClick:saveGeminiKey, style:{ padding:"6px 10px", borderRadius:6, border:"none",
+          background:"#2e6f77", color:"#f4efe6", fontSize:12, fontWeight:600, cursor:"pointer" } }, "Salvar chave"))
+
+      : h(React.Fragment, null,
+        h("div", { style:{ flex:1, overflowY:"auto", padding:"10px 12px", display:"flex", flexDirection:"column", gap:8, fontSize:12 } },
+          chatMessages.length===0 && h("div", { style:{ color:"#6b6f74" } },
+            "Pergunte, por exemplo: \"quantos itens estão vencidos?\", \"o que tem na posição ", 
+            data.length ? data[0].pos : "A.01.1", "?\" ou \"quais clientes têm mais itens danificados?\""),
+          chatMessages.map((m,i)=> h("div", { key:i, style:{
+              alignSelf: m.role==="user" ? "flex-end" : "flex-start",
+              maxWidth:"90%", padding:"6px 10px", borderRadius:8, whiteSpace:"pre-wrap",
+              background: m.role==="user" ? "#2e6f77" : m.role==="erro" ? "rgba(192,57,43,0.25)" : "rgba(255,255,255,0.06)",
+              color: m.role==="erro" ? "#ff8a80" : "#f4efe6" } },
+            m.text)),
+          chatLoading && h("div", { style:{ color:"#6b6f74", alignSelf:"flex-start" } }, "Pensando...")),
+
+        h("div", { style:{ padding:8, borderTop:"1px solid rgba(255,255,255,0.08)", display:"flex", gap:6 } },
+          h("input", { type:"text", value:chatInput, onChange:(e)=>setChatInput(e.target.value),
+            onKeyDown:(e)=>{ if(e.key==="Enter") sendChatMessage(); },
+            placeholder:"Pergunte sobre o estoque...", style:{ flex:1, padding:"6px 8px", borderRadius:6,
+            border:"1px solid rgba(255,255,255,0.15)", background:"rgba(20,24,28,0.9)", color:"#f4efe6",
+            fontSize:12, outline:"none" } }),
+          h("button", { onClick:sendChatMessage, disabled:chatLoading, style:{ padding:"6px 12px", borderRadius:6,
+            border:"none", background:"#2e6f77", color:"#f4efe6", fontSize:12, fontWeight:600,
+            cursor: chatLoading ? "default" : "pointer", opacity: chatLoading ? 0.6 : 1 } }, "Enviar"),
+          h("button", { onClick:forgetGeminiKey, title:"Esquecer chave salva", style:{ padding:"6px 8px",
+            borderRadius:6, border:"1px solid rgba(255,255,255,0.15)", background:"transparent",
+            color:"#6b6f74", fontSize:11, cursor:"pointer" } }, "\u{1F511}")))
+    )
   );
 }
 
