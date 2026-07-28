@@ -217,55 +217,120 @@ function buildEstoqueSummary(data){
   const hoje = new Date(); hoje.setHours(0,0,0,0);
   let totalItens = 0, vencidos = 0, criticos = 0, atencao = 0, danificados = 0;
   const porCliente = new Map();
-  const porRua = new Map();
+  const porRua = new Map(); // rua -> { posicoesOcupadas, itens, vencidos, criticos, atencao, danificados }
   data.forEach(p=>{
-    porRua.set(p.rua, (porRua.get(p.rua)||0) + 1);
+    if(!porRua.has(p.rua)) porRua.set(p.rua, { rua:p.rua, posicoesOcupadas:0, itens:0, vencidos:0, criticos:0, atencao:0, danificados:0 });
+    const r = porRua.get(p.rua);
+    r.posicoesOcupadas++;
     p.itens.forEach(it=>{
       totalItens++;
+      r.itens++;
       const obj = itemToObj(it);
       const cli = String(obj.cliente||"").trim() || "(sem cliente)";
-      if(!porCliente.has(cli)) porCliente.set(cli, { cliente:cli, itens:0, qtde:0, vencidos:0, danificados:0 });
+      if(!porCliente.has(cli)) porCliente.set(cli, { cliente:cli, itens:0, qtde:0, vencidos:0, danificados:0, ruas:new Set() });
       const c = porCliente.get(cli);
-      c.itens++; c.qtde += Number(obj.qtde)||0;
+      c.itens++; c.qtde += Number(obj.qtde)||0; c.ruas.add(p.rua);
       const risco = riscoValidadeItem(it, hoje);
-      if(risco === "vencido"){ vencidos++; c.vencidos++; }
-      else if(risco === "critico") criticos++;
-      else if(risco === "atencao") atencao++;
-      if(isTruthy(obj.danificado)){ danificados++; c.danificados++; }
+      if(risco === "vencido"){ vencidos++; c.vencidos++; r.vencidos++; }
+      else if(risco === "critico"){ criticos++; r.criticos++; }
+      else if(risco === "atencao"){ atencao++; r.atencao++; }
+      if(isTruthy(obj.danificado)){ danificados++; c.danificados++; r.danificados++; }
     });
   });
-  const topClientes = Array.from(porCliente.values()).sort((a,b)=>b.itens-a.itens).slice(0,15);
-  const ruas = Array.from(porRua.entries()).map(([rua,posicoesOcupadas])=>({rua,posicoesOcupadas}));
+  // ranking de clientes: por volume de itens, e separado por quem tem mais problemas
+  // (isso deixa a IA capaz de responder perguntas de priorização sem precisar do detalhe item a item)
+  const clientesArr = Array.from(porCliente.values()).map(c=>({ ...c, ruas: Array.from(c.ruas) }));
+  const topClientesPorQtdItens = [...clientesArr].sort((a,b)=>b.itens-a.itens).slice(0,20);
+  const topClientesPorVencidos = [...clientesArr].filter(c=>c.vencidos>0).sort((a,b)=>b.vencidos-a.vencidos).slice(0,15);
+  const topClientesPorDanificados = [...clientesArr].filter(c=>c.danificados>0).sort((a,b)=>b.danificados-a.danificados).slice(0,15);
+  const ruasArr = Array.from(porRua.values());
+  const ruasComMaisAlertas = [...ruasArr].sort((a,b)=>(b.vencidos+b.criticos+b.danificados)-(a.vencidos+a.criticos+a.danificados)).slice(0,15);
   return {
-    totalPosicoes: data.length, totalItens,
+    totalPosicoes: data.length, totalItens, totalClientes: porCliente.size,
     itensVencidos: vencidos, itensVenceEm7Dias: criticos, itensVenceEm15Dias: atencao,
     itensDanificados: danificados,
-    topClientesPorQtdItens: topClientes,
-    posicoesOcupadasPorRua: ruas
+    topClientesPorQtdItens, topClientesPorVencidos, topClientesPorDanificados,
+    posicoesOcupadasPorRua: ruasArr.map(r=>({ rua:r.rua, posicoesOcupadas:r.posicoesOcupadas })),
+    ruasComMaisAlertas
   };
 }
 // se a pergunta citar um código de posição ou de cliente que existe nos
-// dados, devolve só aquele recorte (evita ter que mandar tudo)
+// dados, devolve só aquele recorte (evita ter que mandar tudo). A busca é
+// tolerante: aceita token parcial/contido no nome do cliente, não só igualdade
+// exata, para a IA conseguir responder mesmo quando a pergunta usa parte do
+// nome, abreviação ou minúsculas.
 function findRelevantSlice(data, question){
-  const tokens = String(question||"").toUpperCase().match(/[A-Z0-9.\-]{3,}/g) || [];
+  const qUpper = String(question||"").toUpperCase();
+  const tokens = qUpper.match(/[A-Z0-9.\-]{2,}/g) || [];
   if(!tokens.length) return null;
   const tokenSet = new Set(tokens);
+
+  // 1) match exato de código de posição
   const posMatches = data.filter(p=>tokenSet.has(String(p.pos).toUpperCase()));
   if(posMatches.length){
-    return { tipo:"posicoes", dados: posMatches.slice(0,10).map(p=>({
+    return { tipo:"posicoes", dados: posMatches.slice(0,15).map(p=>({
       pos:p.pos, rua:p.rua, col:p.col, niv:p.niv, itens:p.itens.map(itemToObj)
     })) };
   }
+
+  // 2) match de rua específica (ex.: "rua 5", "corredor A")
+  const ruaTokenMatch = qUpper.match(/\b(?:RUA|CORREDOR)\s+([A-Z0-9]{1,4})\b/);
+  if(ruaTokenMatch){
+    const ruaAlvo = ruaTokenMatch[1];
+    const posDaRua = data.filter(p=>String(p.rua).toUpperCase()===ruaAlvo);
+    if(posDaRua.length){
+      return { tipo:"itensDaRua", dados: posDaRua.slice(0,40).map(p=>({
+        pos:p.pos, col:p.col, niv:p.niv, itens:p.itens.map(itemToObj)
+      })) };
+    }
+  }
+
+  // 3) match de cliente: primeiro tenta igualdade exata do nome inteiro do
+  // cliente com algum token da pergunta; se não achar nada, tenta match
+  // parcial (nome do cliente contém o token, ou vice-versa)
   const clienteMatches = [];
   data.forEach(p=>{
     p.itens.forEach(it=>{
       const obj = itemToObj(it);
-      if(tokenSet.has(String(obj.cliente||"").toUpperCase())){
+      const cliUpper = String(obj.cliente||"").toUpperCase().trim();
+      if(!cliUpper) return;
+      if(tokenSet.has(cliUpper)){
         clienteMatches.push({ pos:p.pos, rua:p.rua, ...obj });
       }
     });
   });
-  if(clienteMatches.length) return { tipo:"itensDoCliente", dados: clienteMatches.slice(0,60) };
+  if(clienteMatches.length) return { tipo:"itensDoCliente", dados: clienteMatches.slice(0,80) };
+
+  const clienteParcial = [];
+  const tokensLongos = tokens.filter(t=>t.length>=3);
+  if(tokensLongos.length){
+    data.forEach(p=>{
+      p.itens.forEach(it=>{
+        const obj = itemToObj(it);
+        const cliUpper = String(obj.cliente||"").toUpperCase().trim();
+        if(!cliUpper) return;
+        if(tokensLongos.some(t=>cliUpper.includes(t) || t.includes(cliUpper))){
+          clienteParcial.push({ pos:p.pos, rua:p.rua, ...obj });
+        }
+      });
+    });
+  }
+  if(clienteParcial.length) return { tipo:"itensDoClienteAproximado", dados: clienteParcial.slice(0,80) };
+
+  // 4) match de lote/código de item (campo "codigo" ou "lote" do item)
+  const codigoMatches = [];
+  data.forEach(p=>{
+    p.itens.forEach(it=>{
+      const obj = itemToObj(it);
+      const cod = String(obj.codigo||"").toUpperCase();
+      const lote = String(obj.lote||"").toUpperCase();
+      if((cod && tokenSet.has(cod)) || (lote && tokenSet.has(lote))){
+        codigoMatches.push({ pos:p.pos, rua:p.rua, ...obj });
+      }
+    });
+  });
+  if(codigoMatches.length) return { tipo:"itensPorCodigoOuLote", dados: codigoMatches.slice(0,40) };
+
   return null;
 }
 // tenta vários modelos do Gemini em sequência: se um não existir/estiver
@@ -277,14 +342,25 @@ const GEMINI_MODEL_CANDIDATES = [
   "gemini-3.1-flash-lite",
   "gemini-3.5-flash"
 ];
-async function askGeminiSobreEstoque(apiKey, question, summary, slice){
+async function askGeminiSobreEstoque(apiKey, question, summary, slice, historico){
   const promptText =
-    "Você é um especialista em gestão de estoque e armazenagem. Responda em português do Brasil, " +
-    "de forma direta e objetiva (poucos parágrafos ou uma lista curta). Baseie-se SOMENTE nos dados " +
-    "abaixo. Se não der pra responder com esses dados, diga isso claramente em vez de inventar números.\n\n" +
+    "Você é um analista sênior de estoque e armazenagem, ajudando o gestor de um galpão a interpretar os " +
+    "dados do sistema. Responda sempre em português do Brasil, de forma direta e útil.\n\n" +
+    "COMO USAR OS DADOS:\n" +
+    "- O RESUMO GERAL cobre o estoque inteiro (totais, ranking de clientes por volume/vencidos/danificados, " +
+    "ocupação e alertas por rua) — use-o para perguntas amplas, comparações, rankings, tendências e contas.\n" +
+    "- Quando houver um bloco de DADOS ESPECÍFICOS, ele traz o recorte exato (posição, rua ou cliente) que a " +
+    "pergunta parece estar citando — priorize-o para responder sobre itens, lotes ou posições individuais.\n" +
+    "- Sinta-se livre para cruzar informações, somar, comparar e tirar conclusões práticas (ex.: priorização, " +
+    "riscos, sugestões de ação) em vez de só repetir números soltos.\n" +
+    "- Só diga que não é possível responder se o RESUMO e os DADOS ESPECÍFICOS realmente não cobrirem o que foi " +
+    "perguntado; nesse caso explique rapidamente o que falta, sem inventar números.\n" +
+    "- Formate como lista curta quando ajudar a leitura; senão, poucos parágrafos objetivos.\n\n" +
     "RESUMO GERAL DO ESTOQUE (JSON):\n" + JSON.stringify(summary) + "\n\n" +
     (slice ? "DADOS ESPECÍFICOS RELACIONADOS À PERGUNTA (JSON):\n" + JSON.stringify(slice) + "\n\n" : "") +
-    "PERGUNTA: " + question;
+    (historico && historico.length ? "HISTÓRICO RECENTE DA CONVERSA:\n" + historico.map(m=>
+      (m.role==="user" ? "Usuário: " : "Você: ") + m.text).join("\n") + "\n\n" : "") +
+    "PERGUNTA ATUAL: " + question;
 
   let lastError = null;
   for(const model of GEMINI_MODEL_CANDIDATES){
@@ -294,7 +370,8 @@ async function askGeminiSobreEstoque(apiKey, question, summary, slice){
         {
           method: "POST",
           headers: { "Content-Type":"application/json", "x-goog-api-key": apiKey },
-          body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
+          body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 1536 } })
         }
       );
       if(!res.ok){ lastError = model + ": HTTP " + res.status; continue; }
@@ -497,6 +574,15 @@ function Armazem3D(){
   // estado da importação manual da planilha do ERP (.xls/.xlsx/.csv)
   const [importStatus, setImportStatus] = useState(null); // { state:"loading"|"success"|"error", ... }
 
+  // --- responsivo: detecta tela pequena (celular) para adaptar o layout ---
+  const [isMobile, setIsMobile] = useState(()=> typeof window !== "undefined" && window.innerWidth <= 760);
+  const [filtersOpen, setFiltersOpen] = useState(false); // no celular, filtros ficam recolhidos por padrão
+  useEffect(()=>{
+    const onResize = ()=> setIsMobile(window.innerWidth <= 760);
+    window.addEventListener("resize", onResize);
+    return ()=> window.removeEventListener("resize", onResize);
+  }, []);
+
   const handleErpFileSelected = async (file)=>{
     if(!file) return;
     setImportStatus({ state:"loading" });
@@ -541,7 +627,8 @@ function Armazem3D(){
     try{
       const summary = buildEstoqueSummary(data);
       const slice = findRelevantSlice(data, q);
-      const { text, model } = await askGeminiSobreEstoque(geminiKey, q, summary, slice);
+      const historico = chatMessages.slice(-6).filter(m=>m.role==="user" || m.role==="ia");
+      const { text, model } = await askGeminiSobreEstoque(geminiKey, q, summary, slice, historico);
       setChatMessages(m=>[...m, { role:"ia", text, model }]);
     }catch(e){
       setChatMessages(m=>[...m, { role:"erro", text: e.message || String(e) }]);
@@ -1443,29 +1530,35 @@ function Armazem3D(){
     color:"#f4efe6", border:"none", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer"
   });
 
-  return h("div", { style:{ width:"100%", height:"100vh", position:"relative", background:"#0d1013",
-    fontFamily:"'Inter', system-ui, sans-serif", overflow:"hidden" } },
+  const inputBaseStyle = { padding:"6px 10px", borderRadius:6, border:"1px solid rgba(255,255,255,0.15)",
+    background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" };
 
-    // --- barra superior ---
-    h("div", { style:{ position:"absolute", top:0, left:0, right:0, zIndex:10, display:"flex",
-      justifyContent:"space-between", alignItems:"flex-start", padding:"16px 20px", pointerEvents:"none",
-      flexWrap:"wrap", gap:8 } },
+  return h("div", { style:{ width:"100%", height:"100vh", display:"flex", flexDirection:"column",
+    background:"#0d1013", fontFamily:"'Inter', system-ui, sans-serif", overflow:"hidden" } },
 
-      h("div", { style:{ pointerEvents:"auto" } },
-        h("h1", { style:{ margin:0, fontSize:20, color:"#f4efe6", letterSpacing:"-0.02em", fontFamily:"'JetBrains Mono', monospace" } }, "ARMAZÉM 3D — IMAGINAE"),
-        h("p", { style:{ margin:"2px 0 8px", fontSize:12, color:"#a8a29a" } },
+    // --- barra superior (fica no fluxo normal da página: nunca sobrepõe o resto) ---
+    h("div", { style:{ flex:"0 0 auto", display:"flex", justifyContent:"space-between", alignItems:"flex-start",
+      padding: isMobile ? "10px 12px" : "16px 20px", flexWrap:"wrap", gap:8,
+      background:"rgba(13,16,19,0.97)", borderBottom:"1px solid rgba(255,255,255,0.06)" } },
+
+      h("div", { style:{ flex:"1 1 240px", minWidth:0 } },
+        h("h1", { style:{ margin:0, fontSize: isMobile?16:20, color:"#f4efe6", letterSpacing:"-0.02em", fontFamily:"'JetBrains Mono', monospace" } }, "ARMAZÉM 3D — IMAGINAE"),
+        h("p", { style:{ margin:"2px 0 8px", fontSize: isMobile?11:12, color:"#a8a29a" } },
           data.length.toLocaleString("pt-BR"), " posições \xB7 ", totalItens.toLocaleString("pt-BR"), " lotes/SKUs \xB7 ",
           mainLayout.ruas.length, " ruas",
           totalAlertas>0 && h("span", { style:{ color:"#ff8a80" } }, " \xB7 ", totalAlertas, " com alerta \u26A0"),
           ruasLotadas>0 && h("span", { style:{ color:"#e8a13a" } }, " \xB7 ", ruasLotadas, " rua(s) quase lotada(s) \u2265 85%")),
 
-        h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:6 } },
+        // no celular os filtros ficam recolhidos por padrão (evita empilhar tudo na tela toda)
+        isMobile && h("button", { onClick:()=>setFiltersOpen(o=>!o), style:{ margin:"2px 0 8px", padding:"6px 12px",
+          borderRadius:6, border:"1px solid rgba(255,255,255,0.15)", background:"rgba(255,255,255,0.06)",
+          color:"#f4efe6", fontSize:12, fontWeight:600, cursor:"pointer" } }, (filtersOpen ? "\u25B2 Ocultar" : "\u25BC") + " Busca e filtros"),
+
+        (filtersOpen || !isMobile) && h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:6 } },
           h("input", { type:"text", value:searchText, onChange:(e)=>onSearchChange(e.target.value),
-            placeholder:"Buscar posição ou código...", style:{ width:190, padding:"6px 10px", borderRadius:6,
-            border:"1px solid rgba(255,255,255,0.15)", background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" } }),
+            placeholder:"Buscar posição ou código...", style:{ ...inputBaseStyle, width: isMobile ? "100%" : 190 } }),
           h("select", { value: mode.type==="cliente" ? mode.value : "", onChange:(e)=>onClienteChange(e.target.value),
-            style:{ width:150, padding:"6px 10px", borderRadius:6, border:"1px solid rgba(255,255,255,0.15)",
-            background:"rgba(20,24,28,0.9)", color:"#f4efe6", fontSize:12, outline:"none" } },
+            style:{ ...inputBaseStyle, width: isMobile ? "100%" : 150 } },
             h("option", { value:"" }, "Filtrar por cliente..."),
             clientes.map(c => h("option", { key:c, value:c }, c))),
           h("button", { onClick:()=>toggleMode("risco"), style: filterBtnStyle(mode.type==="risco", "#e8a13a") }, "\u26A0 Vence em breve"),
@@ -1478,20 +1571,21 @@ function Armazem3D(){
 
           h("label", { style:{ padding:"6px 12px", borderRadius:6, border:"1px solid rgba(142,207,245,0.4)",
             background: importStatus && importStatus.state==="loading" ? "rgba(142,207,245,0.25)" : "rgba(142,207,245,0.12)",
-            color:"#8ecff5", fontSize:12, fontWeight:600, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6 } },
+            color:"#8ecff5", fontSize:12, fontWeight:600, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6,
+            width: isMobile ? "100%" : "auto", justifyContent:"center" } },
             importStatus && importStatus.state==="loading" ? "Lendo planilha..." : "\u2B06 Atualizar planilha (ERP)",
             h("input", { type:"file", accept:".xls,.xlsx,.csv", style:{ display:"none" },
               onChange:(e)=>{ const f = e.target.files && e.target.files[0]; handleErpFileSelected(f); e.target.value = ""; } }))
         ),
 
-        importStatus && importStatus.state==="success" && h("div", { style:{ fontSize:11, color:"#7fd99a", marginBottom:6 } },
+        (filtersOpen || !isMobile) && importStatus && importStatus.state==="success" && h("div", { style:{ fontSize:11, color:"#7fd99a", marginBottom:6 } },
           "\u2713 Planilha atualizada \u00e0s ", importStatus.at.toLocaleTimeString("pt-BR"), " \u2014 ",
           importStatus.posCount.toLocaleString("pt-BR"), " posições, ", importStatus.itemCount.toLocaleString("pt-BR"), " itens"),
-        importStatus && importStatus.state==="error" && h("div", { style:{ fontSize:11, color:"#ff8a80", marginBottom:6 } },
+        (filtersOpen || !isMobile) && importStatus && importStatus.state==="error" && h("div", { style:{ fontSize:11, color:"#ff8a80", marginBottom:6 } },
           "\u26A0 Erro ao ler a planilha: ", importStatus.message),
 
-        modeLabel && h("div", { style:{ marginTop:6, maxHeight:280, overflowY:"auto", background:"rgba(17,20,23,0.97)",
-          borderRadius:6, border:"1px solid rgba(255,255,255,0.1)", width:320 } },
+        (filtersOpen || !isMobile) && modeLabel && h("div", { style:{ marginTop:6, maxHeight: isMobile ? 220 : 280, overflowY:"auto",
+          background:"rgba(17,20,23,0.97)", borderRadius:6, border:"1px solid rgba(255,255,255,0.1)", width: isMobile ? "100%" : 320 } },
           h("div", { style:{ padding:"6px 10px", fontSize:11, color:"#8ecff5", borderBottom:"1px solid rgba(255,255,255,0.08)" } }, modeLabel),
           mode.type==="busca" && h(React.Fragment, null,
             searchResults.length===0 && h("div", { style:{ padding:8, fontSize:12, color:"#a8a29a" } }, "Nenhum resultado"),
@@ -1505,7 +1599,7 @@ function Armazem3D(){
         )
       ),
 
-      h("div", { style:{ pointerEvents:"auto", display:"flex", gap:6 } },
+      h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
         h("button", { onClick: resetView, style:{ background:"rgba(255,255,255,0.08)", color:"#f4efe6", border:"none",
           borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u{1F3E0} Visão geral"),
         [["orbit","\u{1F5B1}\uFE0F Órbita"], ["walk","\u{1F6B6} Andar"]].map(([m,label]) =>
@@ -1514,9 +1608,10 @@ function Armazem3D(){
       )
     ),
 
-    // --- barra de ruas (atalhos) com indicador de ocupação ---
-    h("div", { style:{ position:"absolute", top:118, left:20, right:20, zIndex:9, pointerEvents:"auto",
-      display:"flex", gap:4, overflowX:"auto", padding:"4px 0" } },
+    // --- barra de ruas (atalhos) com indicador de ocupação — também no fluxo normal ---
+    h("div", { style:{ flex:"0 0 auto", display:"flex", gap:4, overflowX:"auto",
+      padding: isMobile ? "6px 10px" : "6px 20px", background:"rgba(13,16,19,0.97)",
+      borderBottom:"1px solid rgba(255,255,255,0.06)" } },
       mainLayout.ruas.map(r => {
         const oc = ocupacaoPorRua[r] || { ocupado:0, capacidade:0, pct:0 };
         const pctShow = Math.round(oc.pct*100);
@@ -1537,47 +1632,55 @@ function Armazem3D(){
         background:"rgba(106,75,138,0.35)", color:"#d9a4ff", cursor:"pointer", alignSelf:"center" } }, "\u26A0 Bloco fictício")
     ),
 
-    // --- legenda ---
-    h("div", { style:{ position:"absolute", bottom:16, left:20, zIndex:10, background:"rgba(20,24,28,0.85)",
-      padding:"10px 14px", borderRadius:8, fontSize:11, color:"#a8a29a", pointerEvents:"none", maxWidth:320 } },
-      h("div", { style:{ display:"flex", alignItems:"center", gap:8, marginBottom:4 } },
-        h("span", null, "Giro rápido"),
-        h("div", { style:{ width:90, height:8, borderRadius:4, background:"linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)" } }),
-        h("span", null, "Parado há muito tempo")),
-      h("div", null, "Contorno pulsante: ",
-        h("span", { style:{ color:"#ff8a80" } }, "vermelho"), "=vencido/danificado \xB7 ",
-        h("span", { style:{ color:"#ff8c1a" } }, "laranja"), "=vence \u2264 7 dias \xB7 ",
-        h("span", { style:{ color:"#f0d060" } }, "amarelo"), "=vence \u2264 15 dias"),
-      h("div", { style:{ marginTop:6, opacity:0.8 } },
-        viewMode==="orbit" ? "Órbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
-                            : "Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")
-    ),
+    // --- área principal: viewport 3D + tudo que flutua por cima dela ---
+    h("div", { style:{ position:"relative", flex:"1 1 auto", minHeight:0, overflow:"hidden" } },
 
-    // --- viewport 3D ---
-    h("div", { ref: mountRef, style:{ width:"100%", height:"100%", cursor: viewMode==="walk" ? "crosshair" : "grab" } }),
+      // --- legenda ---
+      !(isMobile && viewMode==="walk") && h("div", { style:{ position:"absolute", bottom:16, left: isMobile?12:20, zIndex:10,
+        background:"rgba(20,24,28,0.85)", padding: isMobile ? "8px 10px" : "10px 14px", borderRadius:8,
+        fontSize: isMobile?10:11, color:"#a8a29a", pointerEvents:"none", maxWidth: isMobile ? 200 : 320 } },
+        h("div", { style:{ display:"flex", alignItems:"center", gap:8, marginBottom:4 } },
+          h("span", null, "Giro rápido"),
+          h("div", { style:{ width: isMobile?60:90, height:8, borderRadius:4, background:"linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)" } }),
+          h("span", null, "Parado")),
+        h("div", null, "Contorno: ",
+          h("span", { style:{ color:"#ff8a80" } }, "vermelho"), "=vencido \xB7 ",
+          h("span", { style:{ color:"#ff8c1a" } }, "laranja"), "\u22647d \xB7 ",
+          h("span", { style:{ color:"#f0d060" } }, "amarelo"), "\u226415d"),
+        !isMobile && h("div", { style:{ marginTop:6, opacity:0.8 } },
+          viewMode==="orbit" ? "Órbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
+                              : "Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")
+      ),
 
-    // --- controles de caminhada ---
-    viewMode==="walk" && h("div", { style:{ position:"absolute", bottom:24, right:24, zIndex:10, pointerEvents:"auto" } },
-      h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(3, 52px)", gridTemplateRows:"repeat(2, 52px)", gap:6, justifyItems:"center" } },
-        h("div", null), h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyW") }, "\u25B2"), h("div", null),
-        h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyA") }, "\u25C0"),
-        h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyS") }, "\u25BC"),
-        h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyD") }, "\u25B6")),
-      h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr")),
+      // --- viewport 3D ---
+      h("div", { ref: mountRef, style:{ width:"100%", height:"100%", cursor: viewMode==="walk" ? "crosshair" : "grab" } }),
 
-    h(DetailPanel, { selected, onClose:()=>setSelected(null) }),
+      // --- controles de caminhada ---
+      viewMode==="walk" && h("div", { style:{ position:"absolute", bottom: isMobile?16:24, right: isMobile?16:24, zIndex:10 } },
+        h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(3, 52px)", gridTemplateRows:"repeat(2, 52px)", gap:6, justifyItems:"center" } },
+          h("div", null), h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyW") }, "\u25B2"), h("div", null),
+          h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyA") }, "\u25C0"),
+          h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyS") }, "\u25BC"),
+          h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyD") }, "\u25B6")),
+        h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr")),
 
-    // --- IA do estoque (Gemini) : botão flutuante + painel de chat ---
-    h("button", {
-      onClick:()=>setChatOpen(o=>!o),
-      style:{ position:"absolute", bottom:16, right:16, zIndex:12, width:52, height:52, borderRadius:"50%",
-        border:"1px solid rgba(142,207,245,0.5)", background: chatOpen ? "#2e6f77" : "rgba(20,24,28,0.92)",
-        color:"#8ecff5", fontSize:22, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }
-    }, "\u{1F916}"),
+      h(DetailPanel, { selected, onClose:()=>setSelected(null) }),
 
-    chatOpen && h("div", { style:{ position:"absolute", bottom:76, right:16, zIndex:12, width:320, maxWidth:"90vw",
-      maxHeight:"60vh", background:"rgba(17,20,23,0.98)", border:"1px solid rgba(142,207,245,0.3)", borderRadius:10,
-      display:"flex", flexDirection:"column", overflow:"hidden", boxShadow:"0 8px 24px rgba(0,0,0,0.5)" } },
+      // --- IA do estoque (Gemini) : botão flutuante + painel de chat ---
+      // no celular, em modo "Andar" o D-pad ocupa o canto inferior direito, então o chat sobe pro topo pra não colidir
+      h("button", {
+        onClick:()=>setChatOpen(o=>!o),
+        style:{ position:"absolute", ...(isMobile && viewMode==="walk" ? { top:16 } : { bottom:16 }), right:16, zIndex:12,
+          width:52, height:52, borderRadius:"50%",
+          border:"1px solid rgba(142,207,245,0.5)", background: chatOpen ? "#2e6f77" : "rgba(20,24,28,0.92)",
+          color:"#8ecff5", fontSize:22, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }
+      }, "\u{1F916}"),
+
+      chatOpen && h("div", { style:{ position:"absolute",
+        ...(isMobile && viewMode==="walk" ? { top:76 } : { bottom:76 }), right:16, zIndex:12,
+        width: isMobile ? 300 : 320, maxWidth:"90vw",
+        maxHeight:"60vh", background:"rgba(17,20,23,0.98)", border:"1px solid rgba(142,207,245,0.3)", borderRadius:10,
+        display:"flex", flexDirection:"column", overflow:"hidden", boxShadow:"0 8px 24px rgba(0,0,0,0.5)" } },
 
       h("div", { style:{ padding:"10px 12px", borderBottom:"1px solid rgba(255,255,255,0.08)", display:"flex",
         alignItems:"center", justifyContent:"space-between" } },
@@ -1620,6 +1723,7 @@ function Armazem3D(){
           h("button", { onClick:forgetGeminiKey, title:"Esquecer chave salva", style:{ padding:"6px 8px",
             borderRadius:6, border:"1px solid rgba(255,255,255,0.15)", background:"transparent",
             color:"#6b6f74", fontSize:11, cursor:"pointer" } }, "\u{1F511}")))
+      )
     )
   );
 }
