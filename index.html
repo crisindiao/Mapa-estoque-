@@ -555,6 +555,84 @@ function DetailPanel({ selected, onClose }){
 }
 
 /* =========================================================================
+   DADOS INSTITUCIONAIS DO GALPÃO
+   Extraídos do projeto aprovado pela Vigilância Sanitária de Barueri/SP
+   (Processo PMB 059627/2026, Laudo Técnico de Avaliação - Portaria CVS 10/2017).
+   São dados descritivos do imóvel (não da planilha de estoque) — mantidos
+   separados como referência institucional/regulatória do prédio.
+   ========================================================================= */
+const GALPAO_INFO = {
+  razaoSocial: "PS Logística e Promoções Armazéns Gerais Ltda.",
+  endereco: "Av. Jussara, nº 510 — Galpões 7, 8, 9 e 10, Jardim Santa Cecília, Barueri/SP — CEP 06465-070",
+  atividade: "Depósito de mercadorias para terceiros, exceto armazéns gerais e guarda-móveis (CNAE 5211-7/99)",
+  processo: "PMB 059627/2026 — Laudo Técnico de Avaliação (Portaria CVS 10/2017), rev06",
+  areas: [
+    { label:"Galpão", valor:"7.147,75 m²" },
+    { label:"Doca", valor:"941,70 m²" },
+    { label:"Mezanino", valor:"756,45 m²" },
+    { label:"Total construído", valor:"8.845,90 m²" }
+  ],
+  docas: "Docas numeradas de 25 a 33, com mezanino de apoio em cada vão",
+  fluxos: [
+    { nome:"Alimentos", cor:"#2e8b57" },
+    { nome:"Cosméticos", cor:"#c9781f" },
+    { nome:"Saneantes", cor:"#2255aa" },
+    { nome:"Produtos sem interesse à saúde", cor:"#4fd1c5" },
+    { nome:"Quarentena", cor:"#c2298a" },
+    { nome:"Não conformes", cor:"#c0392b" },
+    { nome:"Produtos inflamáveis", cor:"#8a2be2" }
+  ],
+  nota: "A circulação de empilhadeiras ocorre exclusivamente nos corredores operacionais entre as estruturas porta-paletes, conforme indicado em projeto."
+};
+
+function InfoGalpaoPanel({ open, onClose, isMobile }){
+  if(!open) return null;
+  return h("div", {
+    style:{ position:"absolute", top:0, left:0, width:340, maxWidth:"90vw", height:"100%",
+      background:"rgba(17,20,23,0.97)", color:"#f4efe6", padding:"20px 18px", overflowY:"auto",
+      boxShadow:"8px 0 24px rgba(0,0,0,0.4)", fontFamily:"'Inter', system-ui, sans-serif",
+      borderRight:"1px solid rgba(142,207,245,0.25)", zIndex:20, fontSize:12.5, lineHeight:1.5 }
+  },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 } },
+      h("h2", { style:{ margin:0, fontSize:16, color:"#8ecff5" } }, "\u2139\uFE0F Dados do galpão"),
+      h("button", { onClick:onClose, style:{ background:"none", border:"none", color:"#a8a29a", fontSize:20, cursor:"pointer", lineHeight:1 } }, "\xD7")
+    ),
+    h("p", { style:{ margin:"0 0 10px", fontSize:10.5, color:"#6b6f74" } },
+      "Fonte: projeto aprovado pela Vigilância Sanitária de Barueri/SP — Processo ", GALPAO_INFO.processo, "."),
+
+    h("div", { style:{ marginBottom:12 } },
+      h("strong", { style:{ color:"#e8a13a" } }, GALPAO_INFO.razaoSocial),
+      h("p", { style:{ margin:"4px 0" } }, GALPAO_INFO.endereco),
+      h("p", { style:{ margin:"4px 0", color:"#a8a29a" } }, GALPAO_INFO.atividade)
+    ),
+
+    h("div", { style:{ marginBottom:12 } },
+      h("div", { style:{ fontWeight:700, marginBottom:4, color:"#f4efe6" } }, "Áreas construídas"),
+      GALPAO_INFO.areas.map(a => h("div", { key:a.label, style:{ display:"flex", justifyContent:"space-between",
+        padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.06)" } },
+        h("span", { style:{ color:"#a8a29a" } }, a.label), h("span", null, a.valor)))
+    ),
+
+    h("div", { style:{ marginBottom:12 } },
+      h("div", { style:{ fontWeight:700, marginBottom:4, color:"#f4efe6" } }, "Docas"),
+      h("p", { style:{ margin:0, color:"#a8a29a" } }, GALPAO_INFO.docas)
+    ),
+
+    h("div", { style:{ marginBottom:12 } },
+      h("div", { style:{ fontWeight:700, marginBottom:4, color:"#f4efe6" } }, "Zonas de produto (planta oficial)"),
+      GALPAO_INFO.fluxos.map(f => h("div", { key:f.nome, style:{ display:"flex", alignItems:"center", gap:6, padding:"2px 0" } },
+        h("span", { style:{ width:10, height:10, borderRadius:2, background:f.cor, flex:"0 0 auto" } }),
+        h("span", null, f.nome)))
+    ),
+
+    h("p", { style:{ margin:0, fontSize:10.5, color:"#6b6f74", fontStyle:"italic" } }, GALPAO_INFO.nota),
+
+    h("p", { style:{ margin:"12px 0 0", fontSize:10, color:"#4a4e53" } },
+      "Observação: esta planta descreve o prédio para fins de licenciamento sanitário — a numeração de rua/coluna/nível mostrada no mapa 3D vem da planilha de estoque (WMS), não deste documento.")
+  );
+}
+
+/* =========================================================================
    COMPONENTE PRINCIPAL
    ========================================================================= */
 function Armazem3D(){
@@ -573,6 +651,8 @@ function Armazem3D(){
   const [searchText, setSearchText] = useState("");
   // estado da importação manual da planilha do ERP (.xls/.xlsx/.csv)
   const [importStatus, setImportStatus] = useState(null); // { state:"loading"|"success"|"error", ... }
+  // painel com dados reais do prédio (fonte: projeto de Vigilância Sanitária PMB 059627/2026)
+  const [infoOpen, setInfoOpen] = useState(false);
 
   // --- responsivo: detecta tela pequena (celular) para adaptar o layout ---
   const [isMobile, setIsMobile] = useState(()=> typeof window !== "undefined" && window.innerWidth <= 760);
@@ -1600,6 +1680,8 @@ function Armazem3D(){
       ),
 
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
+        h("button", { onClick:()=>setInfoOpen(o=>!o), style:{ background: infoOpen ? "#2a6f77" : "rgba(255,255,255,0.08)",
+          color:"#8ecff5", border:"none", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u2139\uFE0F Dados do galpão"),
         h("button", { onClick: resetView, style:{ background:"rgba(255,255,255,0.08)", color:"#f4efe6", border:"none",
           borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u{1F3E0} Visão geral"),
         [["orbit","\u{1F5B1}\uFE0F Órbita"], ["walk","\u{1F6B6} Andar"]].map(([m,label]) =>
@@ -1665,6 +1747,7 @@ function Armazem3D(){
         h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr")),
 
       h(DetailPanel, { selected, onClose:()=>setSelected(null) }),
+      h(InfoGalpaoPanel, { open: infoOpen, onClose:()=>setInfoOpen(false), isMobile }),
 
       // --- IA do estoque (Gemini) : botão flutuante + painel de chat ---
       // no celular, em modo "Andar" o D-pad ocupa o canto inferior direito, então o chat sobe pro topo pra não colidir
