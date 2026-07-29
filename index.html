@@ -430,11 +430,24 @@ function classifyEstoque(data){
   const smallRuaThreshold   = median * 0.5;
   const outlierColThreshold = median * 2.5;
 
+  // Em vez de assumir que "rua real = só letras" (isso varia de galpão pra
+  // galpão — aqui é o CONTRÁRIO: ruas reais são numéricas 01-32, e as
+  // fictícias/irregulares usam letras: FR, SAC, HNK, AF...), detectamos
+  // dinamicamente qual dos dois padrões de nome concentra a maior parte das
+  // POSIÇÕES reais do estoque, e tratamos esse como o padrão "real".
+  const isNumeric = name => /^\d+$/.test(name);
+  let posicoesNumericas = 0, posicoesAlfa = 0;
+  ruaNames.forEach(name=>{
+    const n = byRua.get(name).length;
+    if(isNumeric(name)) posicoesNumericas += n; else posicoesAlfa += n;
+  });
+  const padraoRealENumerico = posicoesNumericas >= posicoesAlfa;
+
   const realNames = [], ficticiaNames = [];
   ruaNames.forEach(name=>{
     const maxCol = Math.max(...byRua.get(name).map(p=>p.col));
-    const lettersOnly = /^[A-Z]+$/.test(name);
-    if(!lettersOnly || maxCol < smallRuaThreshold) ficticiaNames.push(name);
+    const seguePadrao = isNumeric(name) === padraoRealENumerico;
+    if(!seguePadrao || maxCol < smallRuaThreshold) ficticiaNames.push(name);
     else realNames.push(name);
   });
   const ficticiaSet = new Set(ficticiaNames);
@@ -1578,11 +1591,11 @@ function Armazem3D(){
         mount.style.cursor = hoveredEntry ? "pointer" : (viewModeRef.current==="walk" ? "crosshair" : "grab");
       }
 
-      // o contorno pulsante de vencido/danificado/risco só deve piscar quando
-      // nenhum filtro estiver ativo, ou quando um desses filtros de alerta
-      // estiver ativo. Com outros filtros (cliente/vazio) ele fica
-      // parado/oculto para não distrair.
-      const shouldPulse = currentModeType === "none" || currentModeType === "vencido" || currentModeType === "danificado" || currentModeType === "risco";
+      // o contorno pulsante é só um "sinal de longe" passivo, pra quando
+      // NENHUM filtro está ativo. Assim que um filtro entra, o destaque
+      // passa a ser 100% a cor sólida da caixa — o contorno some, pra não
+      // competir visualmente com o preenchimento.
+      const shouldPulse = currentModeType === "none";
       const pulse = 0.35 + Math.sin(elapsed*4)*0.25;
       alertMeshes.forEach(m=>{
         m.visible = shouldPulse;
