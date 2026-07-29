@@ -61,8 +61,8 @@ const COLOR_CLIENTE_DESTAQUE   = new THREE.Color(0xffd400); // amarelo sólido d
 const COLOR_VAZIO              = new THREE.Color(0xffffff); // branco sólido para posições vazias
 const COLOR_HOVER              = new THREE.Color(0xffffff);
 const COLOR_SELECT             = new THREE.Color(0x2e6f77);
-const COLOR_PALLET             = new THREE.Color(0xc9a06a); // madeira do palete
-const COLOR_PAPELAO             = [ new THREE.Color(0xcaa06e), new THREE.Color(0xc2925c), new THREE.Color(0xd4b380), new THREE.Color(0xb98c56) ]; // variações de papelão
+const COLOR_PALLET             = new THREE.Color(0xe3c99a); // madeira clara do palete — bem mais claro que o papelão
+const COLOR_PAPELAO             = [ new THREE.Color(0xb5834a), new THREE.Color(0xa8763f), new THREE.Color(0xc2925c), new THREE.Color(0x9c6f3a) ]; // papelão mais escuro/saturado que o palete
 
 // paleta do filtro Família — categorias REAIS da planilha (BRINDE, VESTUARIO,
 // DISPLAY, PRODUTO, GRÁFICO). Cores sólidas distintas, no mesmo espírito visual
@@ -79,6 +79,28 @@ const FAMILIA_CORES = {
 };
 function corFamilia(fam){
   return FAMILIA_CORES[fam] || "#888888";
+}
+
+// Zonas de produto da planta oficial (Processo PMB 059627/2026). A planilha
+// de estoque NÃO tem um campo que amarre posição → zona sanitária, então
+// isso é uma APROXIMAÇÃO: aplicamos a mesma proporção de fileiras vista na
+// planta (2 fileiras Alimentos, 2 Cosméticos, 1 Quarentena, 1 Não conformes,
+// e o restante — a maioria — como Produtos sem interesse à saúde, que é
+// coerente com o mix real de brindes/vestuário/display) na ORDEM das ruas
+// reais (01, 02, 03...). Não é um mapeamento posição-a-posição confirmado.
+const ZONA_CORES = {
+  alimentos:     0x2e8b57,
+  cosmeticos:    0xe08a2e,
+  quarentena:    0xd633a6,
+  naoConformes:  0xd83030,
+  semInteresse:  0x4fd1c5
+};
+function zonaPorIndiceRua(idx){
+  if(idx<2) return "alimentos";
+  if(idx<4) return "cosmeticos";
+  if(idx===4) return "quarentena";
+  if(idx===5) return "naoConformes";
+  return "semInteresse";
 }
 
 /* =========================================================================
@@ -616,7 +638,7 @@ const GALPAO_INFO = {
     { nome:"Não conformes", cor:"#c0392b" },
     { nome:"Produtos inflamáveis", cor:"#8a2be2" }
   ],
-  nota: "A circulação de empilhadeiras ocorre exclusivamente nos corredores operacionais entre as estruturas porta-paletes, conforme indicado em projeto."
+  nota: "A circulação de empilhadeiras ocorre exclusivamente nos corredores operacionais entre as estruturas porta-paletes, conforme indicado em projeto. As faixas coloridas no piso do mapa 3D seguem a MESMA PROPORÇÃO de fileiras da planta (2 Alimentos, 2 Cosméticos, 1 Quarentena, 1 Não conformes, restante Sem interesse à saúde) aplicada em ordem às ruas reais — é uma aproximação visual, não uma amarração posição-a-posição confirmada com o WMS."
 };
 
 function InfoGalpaoPanel({ open, onClose, isMobile }){
@@ -1105,75 +1127,67 @@ function Armazem3D(){
     }
 
     // ---------------------------------------------------------------------
-    // Camada de PALETES — um por posição da GRADE TEÓRICA (ocupada ou vazia)
-    // no galpão principal, e só as ocupadas no bloco fictício. É a "base"
-    // sempre visível, como se fosse andar pelo corredor vendo os paletes.
+    // Faixa de piso por ZONA (aproximação da planta oficial — ver nota em
+    // ZONA_CORES/zonaPorIndiceRua). Só no galpão principal (ruas reais).
     // ---------------------------------------------------------------------
-    function buildPalletLayer(layout, includeEmptyGrid){
-      const occupiedKeySet = new Set(layout.positions.map(p=>p.rua+"|"+p.col+"|"+p.niv));
-      let slots;
-      if(includeEmptyGrid){
-        slots = [];
-        layout.ruas.forEach(rua=>{
-          const maxCol = layout.maxColByRua[rua]||0;
-          const maxNiv = layout.maxLevelByRua[rua]||0;
-          for(let col=1; col<=maxCol; col++){
-            for(let niv=1; niv<=maxNiv; niv++){
-              slots.push({ rua, col, niv, occupied: occupiedKeySet.has(rua+"|"+col+"|"+niv) });
-            }
-          }
-        });
-      } else {
-        slots = layout.positions.map(p=>({ rua:p.rua, col:p.col, niv:p.niv, occupied:true }));
-      }
-      slots = slots.filter(s=>layout.ruaX[s.rua]!==undefined);
-
-      const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshStandardMaterial({ roughness:0.92, metalness:0.0 });
-      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, slots.length));
-      mesh.frustumCulled = false;
-      const palletSizeX = RACK_DEPTH*0.8, palletSizeZ = COL_SPACING*0.86;
-
-      const entries = slots.map((s,i)=>{
-        const x = layout.ruaX[s.rua];
-        const z = (s.col-0.5)*COL_SPACING;
-        const y = BASE_LEVEL_Y + (s.niv-1)*LEVEL_HEIGHT + PALLET_HEIGHT/2 + 0.02;
-        return { rua:s.rua, col:s.col, niv:s.niv, occupied:s.occupied, index:i, x, y, z };
+    (function addZonaFloorTint(layout){
+      const zonaMat = {};
+      Object.keys(ZONA_CORES).forEach(k=>{
+        zonaMat[k] = new THREE.MeshBasicMaterial({ color: ZONA_CORES[k], transparent:true, opacity:0.28, depthWrite:false });
       });
-
-      const dummy = new THREE.Object3D();
-      function writeMatrix(e, scaleMul){
-        dummy.position.set(e.x, e.y, e.z);
-        dummy.scale.set(palletSizeX*scaleMul, PALLET_HEIGHT*scaleMul, palletSizeZ*scaleMul);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(e.index, dummy.matrix);
-      }
-      entries.forEach(e=>{ writeMatrix(e,1); mesh.setColorAt(e.index, COLOR_PALLET); });
-      mesh.instanceMatrix.needsUpdate = true;
-      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      scene.add(mesh);
-      return { mesh, entries, writeMatrix };
-    }
+      layout.ruas.forEach((rua, idx)=>{
+        const x = layout.ruaX[rua];
+        if(x === undefined) return;
+        const zona = zonaPorIndiceRua(idx);
+        const maxCol = layout.maxColByRua[rua] || 0;
+        const depth = maxCol * COL_SPACING;
+        if(depth <= 0) return;
+        const plane = new THREE.Mesh(new THREE.PlaneGeometry(RACK_DEPTH*1.3, depth), zonaMat[zona]);
+        plane.rotation.x = -Math.PI/2;
+        plane.position.set(x, 0.015, depth/2);
+        scene.add(plane);
+      });
+    })(mainLayout);
 
     // ---------------------------------------------------------------------
-    // Camada de PILHAS DE CAIXAS — genérica, em cima de cada palete ocupado.
-    // Cada posição pode gerar de 1 a 6 "caixas" (instâncias), conforme a
-    // quantidade de lotes/SKUs ali, só pra dar volume visual (não é uma
-    // representação exata do item real).
+    // Camada ÚNICA por posição OCUPADA: 1 palete + N caixas (uma pilha).
+    // Posição sem material = simplesmente não existe aqui (nada é desenhado).
+    // Palete e caixas compartilham o mesmo índice de entrada, então qualquer
+    // filtro que oculte a posição oculta as DUAS coisas juntas.
     // ---------------------------------------------------------------------
     const hojeRef = new Date(); hojeRef.setHours(0,0,0,0);
-    function buildBoxStackLayer(layout){
+    function buildOccupiedLayer(layout){
       const occupied = layout.positions.filter(p => layout.ruaX[p.rua] !== undefined);
+
+      const palletSizeX = RACK_DEPTH*0.8, palletSizeZ = COL_SPACING*0.86;
+      const palletGeo = new THREE.BoxGeometry(1,1,1);
+      const palletMat = new THREE.MeshStandardMaterial({ roughness:0.92, metalness:0.0 });
+      const palletMesh = new THREE.InstancedMesh(palletGeo, palletMat, Math.max(1, occupied.length));
+      palletMesh.frustumCulled = false;
+
       const entries = occupied.map((p,i)=>{
         const x = layout.ruaX[p.rua];
         const z = (p.col - 0.5) * COL_SPACING;
+        const palletY = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + PALLET_HEIGHT/2 + 0.02;
         const baseY = BASE_LEVEL_Y + (p.niv-1)*LEVEL_HEIGHT + PALLET_HEIGHT + 0.03;
         const itemCount = p.itens.length;
         const risco = riscoValidadePosicao(p.itens, hojeRef);
         const danificado = p.itens.some(it=>isTruthy(it[8]));
         const tier = tierForItemCount(itemCount);
-        return { data:p, index:i, x, z, baseY, itemCount, risco, danificado, tier, instanceIndices:[] };
+        return { data:p, index:i, x, z, palletY, baseY, itemCount, risco, danificado, tier, instanceIndices:[] };
       });
+
+      const dummy = new THREE.Object3D();
+      function writePalletMatrix(e, scaleMul){
+        dummy.position.set(e.x, e.palletY, e.z);
+        dummy.scale.set(palletSizeX*scaleMul, PALLET_HEIGHT*scaleMul, palletSizeZ*scaleMul);
+        dummy.updateMatrix();
+        palletMesh.setMatrixAt(e.index, dummy.matrix);
+      }
+      entries.forEach(e=>{ writePalletMatrix(e,1); palletMesh.setColorAt(e.index, COLOR_PALLET); });
+      palletMesh.instanceMatrix.needsUpdate = true;
+      if(palletMesh.instanceColor) palletMesh.instanceColor.needsUpdate = true;
+      scene.add(palletMesh);
 
       const instances = [];
       entries.forEach(e=>{
@@ -1184,12 +1198,11 @@ function Armazem3D(){
         });
       });
 
-      const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshStandardMaterial({ roughness:0.85, metalness:0.02 });
-      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, instances.length));
+      const boxGeo = new THREE.BoxGeometry(1,1,1);
+      const boxMat = new THREE.MeshStandardMaterial({ roughness:0.85, metalness:0.02 });
+      const mesh = new THREE.InstancedMesh(boxGeo, boxMat, Math.max(1, instances.length));
       mesh.frustumCulled = false;
 
-      const dummy = new THREE.Object3D();
       function writeInstance(i, scaleMul){
         const inst = instances[i];
         const e = inst.entry;
@@ -1206,8 +1219,8 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de identificação em cima de cada pilha (mesma lógica de
-      // antes: só aparece perto da câmera, controlado no loop de renderização)
+      // plaquinha de identificação em cima de cada pilha (só aparece perto
+      // da câmera, controlado no loop de renderização)
       const posLabels = [];
       entries.forEach(e=>{
         const topY = e.baseY + tierStackHeight(e.tier);
@@ -1218,19 +1231,48 @@ function Armazem3D(){
 
       const posIndex = new Map();
       entries.forEach(e=>posIndex.set(e.data.pos, e));
-      return { mesh, entries, instances, writeInstance, posIndex, posLabels };
+      return { mesh, palletMesh, entries, instances, writeInstance, writePalletMatrix, posIndex, posLabels };
     }
 
-    const mainPallets = buildPalletLayer(mainLayout, true);
-    const ficticiaPallets = ficticiaLayout ? buildPalletLayer(ficticiaLayout, false) : null;
-    const allPalletLayers = ficticiaPallets ? [mainPallets, ficticiaPallets] : [mainPallets];
+    // ---------------------------------------------------------------------
+    // Camada só pro filtro "Vazias": marcador branco na grade teórica menos
+    // as posições ocupadas. Fica com escala 0 (invisível) até o filtro ligar.
+    // ---------------------------------------------------------------------
+    function buildEmptyHighlightLayer(layout){
+      const slots = computeEmptySlots(layout).filter(s=>layout.ruaX[s.rua]!==undefined);
+      const geo = new THREE.BoxGeometry(1,1,1);
+      const mat = new THREE.MeshStandardMaterial({ roughness:0.9, metalness:0.0 });
+      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, slots.length));
+      mesh.frustumCulled = false;
+      const sizeX = RACK_DEPTH*0.7, sizeZ = COL_SPACING*0.76, sizeY = PALLET_HEIGHT*1.3;
+      const entries = slots.map((s,i)=>{
+        const x = layout.ruaX[s.rua];
+        const z = (s.col-0.5)*COL_SPACING;
+        const y = BASE_LEVEL_Y + (s.niv-1)*LEVEL_HEIGHT + sizeY/2 + 0.02;
+        return { index:i, x, y, z };
+      });
+      const dummy = new THREE.Object3D();
+      function writeMatrix(e, scaleMul){
+        dummy.position.set(e.x, e.y, e.z);
+        dummy.scale.set(sizeX*scaleMul, sizeY*scaleMul, sizeZ*scaleMul);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(e.index, dummy.matrix);
+      }
+      entries.forEach(e=>{ writeMatrix(e,0); mesh.setColorAt(e.index, COLOR_VAZIO); });
+      mesh.instanceMatrix.needsUpdate = true;
+      if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      scene.add(mesh);
+      return { mesh, entries, writeMatrix };
+    }
 
-    const mainBoxes = buildBoxStackLayer(mainLayout);
-    const ficticiaBoxes = ficticiaLayout ? buildBoxStackLayer(ficticiaLayout) : null;
-    const allBoxLayers = ficticiaBoxes ? [mainBoxes, ficticiaBoxes] : [mainBoxes];
+    const mainOccupied = buildOccupiedLayer(mainLayout);
+    const ficticiaOccupied = ficticiaLayout ? buildOccupiedLayer(ficticiaLayout) : null;
+    const allBoxLayers = ficticiaOccupied ? [mainOccupied, ficticiaOccupied] : [mainOccupied];
     const allPosLabels = allBoxLayers.flatMap(l=>l.posLabels);
     const combinedPosIndex = new Map();
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
+
+    const emptyHighlight = buildEmptyHighlightLayer(mainLayout);
 
     // severidade combinada de uma posição: prioriza vencido de verdade;
     // se estiver danificada e também perto de vencer, ainda conta como
@@ -1268,6 +1310,7 @@ function Armazem3D(){
 
     function entryMatchesMode(entry){
       if(currentModeType === "none" || currentModeType === "busca") return true;
+      if(currentModeType === "vazio") return false; // posições ocupadas somem inteiras (palete+caixa) nesse filtro
       const itens = entry.data.itens;
       if(currentModeType === "vencido")     return itens.some(it => isTruthy(it[6]));
       if(currentModeType === "danificado")  return itens.some(it => isTruthy(it[8]));
@@ -1276,7 +1319,7 @@ function Armazem3D(){
       if(currentModeType === "familia")     return itens.some(it => String(it[10]||"").trim() === String(currentModeValue||"").trim());
       return true;
     }
-    const FILTER_MODES = ["vencido","danificado","risco","cliente","familia"];
+    const FILTER_MODES = ["vencido","danificado","risco","cliente","familia","vazio"];
     // cor SÓLIDA (sem opacidade/mistura) de destaque do filtro ativo — null
     // significa "usar a cor padrão de papelão" (sem filtro).
     function entryHighlightColor(entry){
@@ -1290,6 +1333,10 @@ function Armazem3D(){
       const matches = entryMatchesMode(entry);
       const visible = !isFiltering || matches;
       const scaleMul = !visible ? 0 : (entry===hoveredEntry || entry===selectedEntry ? 1.14 : 1);
+      // o palete só existe (visualmente) enquanto a posição existe/combina com
+      // o filtro — sem material ali, ou filtrada pra fora, some junto com a caixa
+      layer.writePalletMatrix(entry, scaleMul);
+      layer.palletMesh.setColorAt(entry.index, COLOR_PALLET);
       const highlightColor = entryHighlightColor(entry);
       entry.instanceIndices.forEach(i=>{
         layer.writeInstance(i, scaleMul);
@@ -1305,26 +1352,20 @@ function Armazem3D(){
         layer.mesh.instanceMatrix.needsUpdate = true;
         if(layer.mesh.instanceColor) layer.mesh.instanceColor.needsUpdate = true;
         layer.mesh.material.needsUpdate = true;
+        layer.palletMesh.instanceMatrix.needsUpdate = true;
+        if(layer.palletMesh.instanceColor) layer.palletMesh.instanceColor.needsUpdate = true;
       });
     }
     refreshAllVisuals();
 
-    // paletes: fora do filtro "vazio", ficam todos visíveis na cor de madeira.
-    // Com "vazio" ativo, só as posições realmente vazias da grade ficam em
-    // branco sólido e em destaque; as ocupadas somem.
-    function refreshPalletVisuals(){
+    // camada extra só do filtro "Vazias": mostra marcador branco sólido nas
+    // posições da grade que realmente não têm nenhum registro de estoque.
+    function refreshEmptyHighlight(){
       const vazioAtivo = currentModeType === "vazio";
-      allPalletLayers.forEach(layer=>{
-        layer.entries.forEach(e=>{
-          const visible = !vazioAtivo || !e.occupied;
-          layer.writeMatrix(e, visible ? 1 : 0);
-          layer.mesh.setColorAt(e.index, (vazioAtivo && !e.occupied) ? COLOR_VAZIO : COLOR_PALLET);
-        });
-        layer.mesh.instanceMatrix.needsUpdate = true;
-        if(layer.mesh.instanceColor) layer.mesh.instanceColor.needsUpdate = true;
-      });
+      emptyHighlight.entries.forEach(e=> emptyHighlight.writeMatrix(e, vazioAtivo ? 1 : 0));
+      emptyHighlight.mesh.instanceMatrix.needsUpdate = true;
     }
-    refreshPalletVisuals();
+    refreshEmptyHighlight();
 
     // destaque de busca livre (não oculta, só realça e escurece o resto)
     function applyBuscaHighlight(matchSet){
@@ -1361,7 +1402,7 @@ function Armazem3D(){
       } else {
         refreshAllVisuals();
       }
-      refreshPalletVisuals();
+      refreshEmptyHighlight();
     };
 
     api.current.setSelectedByPos = (pos)=>{
