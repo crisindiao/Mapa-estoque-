@@ -1041,9 +1041,42 @@ function Armazem3D(){
       const tex = getLabelTexture(text, opts);
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent:true }));
       sprite.position.set(x,y,z);
-      sprite.scale.set(opts.big ? 3.6 : 0.85, opts.big ? 1.62 : 0.42, 1);
+      sprite.scale.set(opts.big ? 3.6 : (opts.tiny ? 0.42 : 0.85), opts.big ? 1.62 : (opts.tiny ? 0.21 : 0.42), 1);
       scene.add(sprite);
       return sprite;
+    }
+
+    // texto "pintado no chão": um plano deitado (não vira de frente pra
+    // câmera como o sprite) — pra ler de cima, tipo pintura de piso
+    const floorLabelTextureCache = new Map();
+    function getFloorLabelTexture(text, color){
+      const key = text + "|" + color;
+      if(floorLabelTextureCache.has(key)) return floorLabelTextureCache.get(key);
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024; canvas.height = 192;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = color || "#1c2b3a";
+      ctx.font = "bold 108px 'Inter', system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, canvas.width/2, canvas.height/2);
+      const tex = new THREE.CanvasTexture(canvas);
+      floorLabelTextureCache.set(key, tex);
+      return tex;
+    }
+    function addFloorLabel(text, x, z, opts){
+      opts = opts || {};
+      const tex = getFloorLabelTexture(text, opts.color);
+      const mat = new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false });
+      const planeW = opts.width || 6;
+      const planeH = planeW * (192/1024);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(planeW, planeH), mat);
+      mesh.rotation.x = -Math.PI/2;
+      if(opts.rotationZ) mesh.rotation.z = opts.rotationZ;
+      mesh.position.set(x, opts.y!=null ? opts.y : 0.025, z);
+      scene.add(mesh);
+      return mesh;
     }
 
     // ---------------------------------------------------------------------
@@ -1135,6 +1168,7 @@ function Armazem3D(){
       Object.keys(ZONA_CORES).forEach(k=>{
         zonaMat[k] = new THREE.MeshBasicMaterial({ color: ZONA_CORES[k], transparent:true, opacity:0.28, depthWrite:false });
       });
+      const grupoX = {}; // zona -> lista de X das ruas daquela zona (pra centralizar o texto)
       layout.ruas.forEach((rua, idx)=>{
         const x = layout.ruaX[rua];
         if(x === undefined) return;
@@ -1146,6 +1180,17 @@ function Armazem3D(){
         plane.rotation.x = -Math.PI/2;
         plane.position.set(x, 0.015, depth/2);
         scene.add(plane);
+        (grupoX[zona] = grupoX[zona]||[]).push(x);
+      });
+      const ZONA_NOME = { alimentos:"ALIMENTOS", cosmeticos:"COSMÉTICOS", quarentena:"QUARENTENA",
+        naoConformes:"NÃO CONFORMES", semInteresse:"PRODUTOS SEM INTERESSE À SAÚDE" };
+      const ZONA_COR_CSS = {};
+      Object.keys(ZONA_CORES).forEach(k=>{ ZONA_COR_CSS[k] = "#"+ZONA_CORES[k].toString(16).padStart(6,"0"); });
+      Object.keys(grupoX).forEach(zona=>{
+        const xs = grupoX[zona];
+        const xMid = xs.reduce((a,b)=>a+b,0)/xs.length;
+        const largura = Math.min(20, Math.max(4, xs.length * 1.1));
+        addFloorLabel(ZONA_NOME[zona], xMid, 3.2, { color: ZONA_COR_CSS[zona], width: largura });
       });
     })(mainLayout);
 
@@ -1167,7 +1212,7 @@ function Armazem3D(){
         plane.rotation.x = -Math.PI/2;
         plane.position.set(totalW/2, 0.02, z);
         scene.add(plane);
-        addLabelSprite("\u2194 CORREDOR TRANSVERSAL", totalW/2, 0.55, z, { color:"#33475a" });
+        addFloorLabel("\u2194 CORREDOR TRANSVERSAL", totalW/2, z, { color:"#33475a", width: Math.min(totalW*0.6, 14) });
       }
     })(mainLayout);
 
@@ -1194,14 +1239,14 @@ function Armazem3D(){
         plane.rotation.x = -Math.PI/2;
         plane.position.set(xCursor + w/2, 0.02, -depth/2);
         scene.add(plane);
-        addLabelSprite(zn.nome, xCursor + w/2, 1.7, -depth/2, { big:true, color:"#eef2f0" });
+        addFloorLabel(zn.nome, xCursor + w/2, -depth/2, { color:"#eef2f0", width: Math.min(w-1, 8) });
         xCursor += w;
       });
       // docas 25 a 33, conforme a planta (Processo PMB 059627/2026)
       const numDocas = 9;
       for(let i=0;i<numDocas;i++){
         const x = (totalW/numDocas)*(i+0.5);
-        addLabelSprite("DOCA " + (25+i), x, 0.35, -depth-0.7, { color:"#c9a24a" });
+        addFloorLabel("DOCA " + (25+i), x, -depth-0.7, { color:"#c9a24a", width:2.4 });
       }
     })(mainLayout);
 
@@ -1275,14 +1320,16 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de identificação na LATERAL do palete (borda frontal, na
-      // altura do palete — não em cima da pilha de caixas), preta, só
-      // aparece perto da câmera (controlado no loop de renderização)
+      // plaquinha de identificação bem PEQUENA, colada na frente do palete
+      // (borda frontal, quase na altura do topo do palete) — como é um
+      // sprite, sempre vira de frente pra câmera, então dá pra ler olhando
+      // da rua tanto pra direita quanto pra esquerda. Preta, só aparece
+      // perto da câmera (controlado no loop de renderização).
       const posLabels = [];
       entries.forEach(e=>{
-        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.14;
-        const labelZ = e.z - palletSizeZ/2 - 0.04;
-        const spr = addLabelSprite(String(e.data.pos), e.x, labelY, labelZ, { color:"#000000" });
+        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.06;
+        const labelZ = e.z - palletSizeZ/2 - 0.015;
+        const spr = addLabelSprite(String(e.data.pos), e.x, labelY, labelZ, { color:"#000000", tiny:true });
         spr.visible = false;
         posLabels.push(spr);
       });
