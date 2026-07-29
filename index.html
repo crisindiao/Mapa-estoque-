@@ -1129,7 +1129,7 @@ function Armazem3D(){
       slots = slots.filter(s=>layout.ruaX[s.rua]!==undefined);
 
       const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.92, metalness:0.0 });
+      const mat = new THREE.MeshStandardMaterial({ roughness:0.92, metalness:0.0 });
       const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, slots.length));
       mesh.frustumCulled = false;
       const palletSizeX = RACK_DEPTH*0.8, palletSizeZ = COL_SPACING*0.86;
@@ -1185,7 +1185,7 @@ function Armazem3D(){
       });
 
       const geo = new THREE.BoxGeometry(1,1,1);
-      const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.85, metalness:0.02 });
+      const mat = new THREE.MeshStandardMaterial({ roughness:0.85, metalness:0.02 });
       const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, instances.length));
       mesh.frustumCulled = false;
 
