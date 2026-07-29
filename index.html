@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Armazém 3D</title>
+<title>Armazém 3D — Imaginae</title>
 <style>
   html, body, #root { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d1013; }
   * { box-sizing: border-box; }
@@ -555,7 +555,8 @@ function DetailPanel({ selected, onClose }){
       h("div", { style:{ display:"flex", gap:12, flexWrap:"wrap", color:"#a8a29a", fontSize:11, marginBottom:4 } },
         h("span", null, "Qtd: ", h("strong", { style:{ color:"#f4efe6" } }, it.qtde)),
         h("span", null, "Lote: ", it.lote || "\u2014"),
-        h("span", null, "Val: ", it.validade || "\u2014")
+        h("span", null, "Val: ", it.validade || "\u2014"),
+        it.familia && h("span", null, "Família: ", it.familia)
       ),
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
         isTruthy(it.vencido) && h("span", { style:{ fontSize:10, background:"rgba(192,57,43,0.25)", color:"#ff8a80", padding:"1px 6px", borderRadius:4 } }, "VENCIDO"),
@@ -860,6 +861,14 @@ function Armazem3D(){
     return Array.from(set).sort();
   }, [data]);
 
+  // valores reais do campo "Familia" da planilha (BRINDE, VESTUARIO, DISPLAY, PRODUTO, GRÁFICO...)
+  const familias = useMemo(()=>{
+    if(!data) return [];
+    const set = new Set();
+    data.forEach(p=>p.itens.forEach(it=>{ if(it[10]) set.add(it[10]); }));
+    return Array.from(set).sort();
+  }, [data]);
+
   // lista de resultados quando o modo é "busca"
   const searchResults = useMemo(()=>{
     if(!data || mode.type!=="busca" || !mode.value) return [];
@@ -871,12 +880,13 @@ function Armazem3D(){
   }, [data, mode]);
   const searchResultsShown = useMemo(()=> searchResults.slice(0,40), [searchResults]);
 
-  const modeLabel = mode.type==="cliente" ? "Cliente: " + mode.value
+  const modeLabel = mode.type==="cliente" ? "Cliente: " + mode.value + " (destaque amarelo sólido)"
+    : mode.type==="familia" ? "Família: " + mode.value + " (destaque sólido)"
     : mode.type==="busca" ? "Busca: \"" + mode.value + "\""
-    : mode.type==="vencido" ? "Mostrando apenas posições com item VENCIDO"
-    : mode.type==="danificado" ? "Mostrando apenas posições com item DANIFICADO"
-    : mode.type==="risco" ? "Vencidos + vence em até 15 dias (vermelho/laranja/amarelo)"
-    : mode.type==="vazio" ? "Destacando posições vazias"
+    : mode.type==="vencido" ? "Mostrando apenas posições com item VENCIDO (vermelho sólido)"
+    : mode.type==="danificado" ? "Mostrando apenas posições com item DANIFICADO (vermelho sólido)"
+    : mode.type==="risco" ? "Vencidos + a vencer em até 15 dias (vermelho sólido)"
+    : mode.type==="vazio" ? "Destacando posições vazias (branco sólido)"
     : null;
 
   // avisa a cena Three.js sempre que o modo de visualização mudar
@@ -917,6 +927,10 @@ function Armazem3D(){
   const onClienteChange = useCallback((val)=>{
     setSearchText("");
     setMode(val ? { type:"cliente", value: val } : { type:"none" });
+  }, []);
+  const onFamiliaChange = useCallback((val)=>{
+    setSearchText("");
+    setMode(val ? { type:"familia", value: val } : { type:"none" });
   }, []);
 
   /* =======================================================================
@@ -1453,8 +1467,8 @@ function Armazem3D(){
       if(hits.length>0){
         const hitMesh = hits[0].object;
         const layer = allBoxLayers.find(l=>l.mesh===hitMesh);
-        const entry = layer.entries[hits[0].instanceId];
-        if(!entryMatchesMode(entry) && (currentModeType==="vencido"||currentModeType==="danificado"||currentModeType==="risco"||currentModeType==="cliente")) return;
+        const entry = layer.instances[hits[0].instanceId].entry;
+        if(!entryMatchesMode(entry) && FILTER_MODES.includes(currentModeType)) return;
         setSelected(prev => (prev && prev.pos===entry.data.pos) ? null : entry.data);
       }
     };
@@ -1555,7 +1569,7 @@ function Armazem3D(){
       raycaster.setFromCamera(pointerNdc, camera);
       const hits = raycaster.intersectObjects(allBoxLayers.map(l=>l.mesh));
       const hit = hits.length>0 ? hits[0] : null;
-      const hitEntry = hit ? allBoxLayers.find(l=>l.mesh===hit.object).entries[hit.instanceId] : null;
+      const hitEntry = hit ? allBoxLayers.find(l=>l.mesh===hit.object).instances[hit.instanceId].entry : null;
       if(hitEntry !== hoveredEntry){
         const prev = hoveredEntry;
         hoveredEntry = hitEntry;
@@ -1681,6 +1695,10 @@ function Armazem3D(){
             style:{ ...inputBaseStyle, width: isMobile ? "100%" : 150 } },
             h("option", { value:"" }, "Filtrar por cliente..."),
             clientes.map(c => h("option", { key:c, value:c }, c))),
+          h("select", { value: mode.type==="familia" ? mode.value : "", onChange:(e)=>onFamiliaChange(e.target.value),
+            style:{ ...inputBaseStyle, width: isMobile ? "100%" : 150 } },
+            h("option", { value:"" }, "Filtrar por família..."),
+            familias.map(f => h("option", { key:f, value:f }, f))),
           h("button", { onClick:()=>toggleMode("risco"), style: filterBtnStyle(mode.type==="risco", "#e8a13a") }, "\u26A0 Vence em breve"),
           h("button", { onClick:()=>toggleMode("vencido"), style: filterBtnStyle(mode.type==="vencido", "#c0392b") }, "\u23F0 Vencidos"),
           h("button", { onClick:()=>toggleMode("danificado"), style: filterBtnStyle(mode.type==="danificado", "#c0392b") }, "\u2757 Danificados"),
@@ -1760,15 +1778,19 @@ function Armazem3D(){
       // --- legenda ---
       !(isMobile && viewMode==="walk") && h("div", { style:{ position:"absolute", bottom:16, left: isMobile?12:20, zIndex:10,
         background:"rgba(20,24,28,0.85)", padding: isMobile ? "8px 10px" : "10px 14px", borderRadius:8,
-        fontSize: isMobile?10:11, color:"#a8a29a", pointerEvents:"none", maxWidth: isMobile ? 200 : 320 } },
-        h("div", { style:{ display:"flex", alignItems:"center", gap:8, marginBottom:4 } },
-          h("span", null, "Giro rápido"),
-          h("div", { style:{ width: isMobile?60:90, height:8, borderRadius:4, background:"linear-gradient(90deg,#2e8b57,#e8a13a,#c0392b)" } }),
-          h("span", null, "Parado")),
-        h("div", null, "Contorno: ",
+        fontSize: isMobile?10:11, color:"#a8a29a", pointerEvents:"none", maxWidth: isMobile ? 220 : 340 } },
+        h("div", { style:{ marginBottom:4 } },
+          h("span", { style:{ display:"inline-block", width:10, height:10, background:"#c9a06a", borderRadius:2, marginRight:4, verticalAlign:"middle" } }),
+          "Palete \xB7 ",
+          h("span", { style:{ display:"inline-block", width:10, height:10, background:"#caa06e", borderRadius:2, margin:"0 4px 0 8px", verticalAlign:"middle" } }),
+          "Caixas (volume aproximado pela qtd. de lotes/SKUs)"),
+        h("div", { style:{ marginBottom:4 } }, "Contorno pulsante: ",
           h("span", { style:{ color:"#ff8a80" } }, "vermelho"), "=vencido \xB7 ",
           h("span", { style:{ color:"#ff8c1a" } }, "laranja"), "\u22647d \xB7 ",
           h("span", { style:{ color:"#f0d060" } }, "amarelo"), "\u226415d"),
+        h("div", null, "Filtros pintam sólido: ",
+          h("span", { style:{ color:"#ffd400" } }, "amarelo"), "=cliente \xB7 ",
+          h("span", { style:{ color:"#ff8a80" } }, "vermelho"), "=vencido/danificado/a vencer \xB7 branco=vazia"),
         !isMobile && h("div", { style:{ marginTop:6, opacity:0.8 } },
           viewMode==="orbit" ? "Órbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
                               : "Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")
