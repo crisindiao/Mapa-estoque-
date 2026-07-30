@@ -1321,16 +1321,19 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de identificação bem PEQUENA, colada na face do palete que
-      // dá pro CORREDOR (não na lateral ao longo da fileira) — usa
-      // ruaFaceDir pra saber de que lado (+X ou -X) fica o corredor daquela
-      // rua. Como é um sprite, sempre vira de frente pra câmera, então dá
-      // pra ler olhando da rua tanto pra direita quanto pra esquerda.
+      // plaquinha de identificação PRESA NA VIGA da estrutura, na altura
+      // daquele nível, alinhada em Z com a posição — não no palete nem na
+      // caixa. Motivo: entre o topo do palete e o fundo da caixa não sobra
+      // espaço nenhum (a caixa encosta direto no palete), então qualquer
+      // plaquinha ali ou corta na viga de baixo ou invade a caixa de cima.
+      // Presa na viga (voltada pro corredor), fica sempre livre e alinhada
+      // com a posição que representa.
       const posLabels = [];
       entries.forEach(e=>{
         const faceDir = layout.ruaFaceDir[e.data.rua] || 1;
-        const labelX = e.x + faceDir * (palletSizeX/2 + 0.03);
-        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.18; // bem acima da viga/palete, senão fica cortada
+        const beamBaseY = BASE_LEVEL_Y + (e.data.niv-1)*LEVEL_HEIGHT;
+        const labelX = e.x + faceDir * (RACK_DEPTH/2 + 0.05);
+        const labelY = beamBaseY + 0.26;
         const spr = addLabelSprite(String(e.data.pos), labelX, labelY, e.z, { color:"#000000", tiny:true });
         spr.visible = false;
         posLabels.push(spr);
@@ -1369,7 +1372,25 @@ function Armazem3D(){
       mesh.instanceMatrix.needsUpdate = true;
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
-      return { mesh, entries, writeMatrix };
+
+      // plaquinha de posição também nas vazias — presa na viga, mesmo
+      // critério das ocupadas. Só aparece perto da câmera E com o filtro
+      // "Vazias" ativo (marcado via userData, checado no loop de renderização)
+      const posLabels = [];
+      slots.forEach(s=>{
+        const faceDir = layout.ruaFaceDir[s.rua] || 1;
+        const x = layout.ruaX[s.rua];
+        const z = (s.col-0.5)*COL_SPACING;
+        const beamBaseY = BASE_LEVEL_Y + (s.niv-1)*LEVEL_HEIGHT;
+        const labelX = x + faceDir * (RACK_DEPTH/2 + 0.05);
+        const labelY = beamBaseY + 0.26;
+        const spr = addLabelSprite(String(s.pos), labelX, labelY, z, { color:"#000000", tiny:true });
+        spr.visible = false;
+        spr.userData.emptyLabel = true;
+        posLabels.push(spr);
+      });
+
+      return { mesh, entries, writeMatrix, posLabels };
     }
 
     const mainOccupied = buildOccupiedLayer(mainLayout);
@@ -1380,6 +1401,7 @@ function Armazem3D(){
     allBoxLayers.forEach(layer => layer.posIndex.forEach((v,k)=>combinedPosIndex.set(k, { layer, entry:v })));
 
     const emptyHighlight = buildEmptyHighlightLayer(mainLayout);
+    allPosLabels.push(...emptyHighlight.posLabels);
 
     // severidade combinada de uma posição: prioriza vencido de verdade;
     // se estiver danificada e também perto de vencer, ainda conta como
@@ -1800,7 +1822,9 @@ function Armazem3D(){
       labelCullCounter++;
       if(labelCullCounter % 6 === 0){
         const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+        const vazioAtivo = currentModeType === "vazio";
         allPosLabels.forEach(spr=>{
+          if(spr.userData.emptyLabel && !vazioAtivo){ spr.visible = false; return; }
           const dx = spr.position.x-cx, dy = spr.position.y-cy, dz = spr.position.z-cz;
           spr.visible = (dx*dx + dy*dy + dz*dz) < LABEL_VISIBLE_DIST2;
         });
