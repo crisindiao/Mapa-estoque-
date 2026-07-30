@@ -521,15 +521,16 @@ function buildBlockLayout(orderedRuas, positions, originX){
   });
   const corridorSpanX = AISLE_WIDTH + RACK_DEPTH*2 + CORRIDOR_GAP;
   const ruaX = {};
+  const ruaFaceDir = {}; // +1 = corredor fica do lado +X da rua · -1 = do lado -X
   corridors.forEach((c,i)=>{
     const centerX = originX + i*corridorSpanX;
-    if(c.left)  ruaX[c.left]  = centerX - AISLE_WIDTH/2 - RACK_DEPTH/2;
-    if(c.right) ruaX[c.right] = centerX + AISLE_WIDTH/2 + RACK_DEPTH/2;
+    if(c.left)  { ruaX[c.left]  = centerX - AISLE_WIDTH/2 - RACK_DEPTH/2; ruaFaceDir[c.left]  = +1; }
+    if(c.right) { ruaX[c.right] = centerX + AISLE_WIDTH/2 + RACK_DEPTH/2; ruaFaceDir[c.right] = -1; }
   });
   const maxColOverall = Math.max(1, ...orderedRuas.map(r=>maxColByRua[r]||0));
   const totalWidth = corridors.length * corridorSpanX;
   const totalDepth = maxColOverall * COL_SPACING;
-  return { ruas: orderedRuas, corridors, ruaX, maxColByRua, maxLevelByRua,
+  return { ruas: orderedRuas, corridors, ruaX, ruaFaceDir, maxColByRua, maxLevelByRua,
            corridorSpanX, totalWidth, totalDepth, maxColOverall, originX, positions };
 }
 
@@ -1320,16 +1321,17 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de identificação bem PEQUENA, colada na frente do palete
-      // (borda frontal, quase na altura do topo do palete) — como é um
-      // sprite, sempre vira de frente pra câmera, então dá pra ler olhando
-      // da rua tanto pra direita quanto pra esquerda. Preta, só aparece
-      // perto da câmera (controlado no loop de renderização).
+      // plaquinha de identificação bem PEQUENA, colada na face do palete que
+      // dá pro CORREDOR (não na lateral ao longo da fileira) — usa
+      // ruaFaceDir pra saber de que lado (+X ou -X) fica o corredor daquela
+      // rua. Como é um sprite, sempre vira de frente pra câmera, então dá
+      // pra ler olhando da rua tanto pra direita quanto pra esquerda.
       const posLabels = [];
       entries.forEach(e=>{
-        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.06;
-        const labelZ = e.z - palletSizeZ/2 - 0.015;
-        const spr = addLabelSprite(String(e.data.pos), e.x, labelY, labelZ, { color:"#000000", tiny:true });
+        const faceDir = layout.ruaFaceDir[e.data.rua] || 1;
+        const labelX = e.x + faceDir * (palletSizeX/2 + 0.02);
+        const labelY = e.palletY;
+        const spr = addLabelSprite(String(e.data.pos), labelX, labelY, e.z, { color:"#000000", tiny:true });
         spr.visible = false;
         posLabels.push(spr);
       });
@@ -1586,7 +1588,17 @@ function Armazem3D(){
       const dx = e.clientX-lastX, dy = e.clientY-lastY;
       if(dragging){
         dragDistance += Math.abs(dx)+Math.abs(dy);
-        if(viewModeRef.current==="orbit"){
+        if(viewModeRef.current==="orbit" && e.ctrlKey){
+          // Ctrl + arraste do mouse = "andar" pelo corredor sem precisar
+          // trocar de modo — desloca o alvo da câmera (pan) na direção que
+          // você arrasta, em vez de girar.
+          thetaVelocity = 0; phiVelocity = 0;
+          const theta = spherical.theta;
+          const scale = spherical.radius*0.0032;
+          orbitTarget.x -= (Math.cos(theta)*dx - Math.sin(theta)*dy) * scale;
+          orbitTarget.z -= (-Math.sin(theta)*dx - Math.cos(theta)*dy) * scale;
+          clampOrbitTarget();
+        } else if(viewModeRef.current==="orbit"){
           const dTheta = -dx*0.008, dPhi = dy*0.008;
           spherical.theta += dTheta;
           spherical.phi = clamp(spherical.phi + dPhi, 0.15, Math.PI/2.05);
@@ -1681,8 +1693,15 @@ function Armazem3D(){
     };
 
     api.current.resetView = ()=>{
-      orbitTarget.set(centerX, 1.7, centerZ);
-      spherical.radius = initialRadius; spherical.theta = Math.PI*0.22; spherical.phi = Math.PI/3.1;
+      // câmera de frente pro galpão inteiro, um pouco afastada e elevada,
+      // olhando ao longo do comprimento das ruas — vê todas lado a lado
+      // com os números, tipo "parado na entrada olhando pros corredores"
+      const overviewX = mainLayout.totalWidth/2 - mainLayout.corridorSpanX/2;
+      const overviewZ = Math.min(10, mainLayout.totalDepth*0.12);
+      orbitTarget.set(overviewX, 3, overviewZ);
+      spherical.radius = clamp(mainLayout.totalWidth*0.8 + 22, initialRadius, maxOrbitRadius);
+      spherical.theta = Math.PI;
+      spherical.phi = Math.PI/2.4;
       syncCameraTargets();
       setViewMode("orbit");
     };
@@ -1977,7 +1996,7 @@ function Armazem3D(){
           h("span", { style:{ color:"#ffd400" } }, "amarelo"), "=cliente \xB7 ",
           h("span", { style:{ color:"#ff8a80" } }, "vermelho"), "=vencido/danificado/a vencer \xB7 branco=vazia"),
         !isMobile && h("div", { style:{ marginTop:6, opacity:0.8 } },
-          viewMode==="orbit" ? "Órbita: arraste (1 dedo) para girar \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
+          viewMode==="orbit" ? "Órbita: arraste para girar \xB7 Ctrl+arraste (mouse) p/ andar pelo corredor \xB7 2 dedos p/ mover e afastar/aproximar \xB7 toque num bloco"
                               : "Andar: use as setas na tela (ou WASD) \xB7 arraste p/ olhar \xB7 toque num bloco")
       ),
 
