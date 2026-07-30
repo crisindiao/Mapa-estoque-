@@ -1042,7 +1042,7 @@ function Armazem3D(){
       const tex = getLabelTexture(text, opts);
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent:true }));
       sprite.position.set(x,y,z);
-      sprite.scale.set(opts.big ? 3.6 : (opts.tiny ? 0.42 : 0.85), opts.big ? 1.62 : (opts.tiny ? 0.21 : 0.42), 1);
+      sprite.scale.set(opts.big ? 3.6 : (opts.tiny ? 0.32 : 0.85), opts.big ? 1.62 : (opts.tiny ? 0.16 : 0.42), 1);
       scene.add(sprite);
       return sprite;
     }
@@ -1329,8 +1329,8 @@ function Armazem3D(){
       const posLabels = [];
       entries.forEach(e=>{
         const faceDir = layout.ruaFaceDir[e.data.rua] || 1;
-        const labelX = e.x + faceDir * (palletSizeX/2 + 0.02);
-        const labelY = e.palletY;
+        const labelX = e.x + faceDir * (palletSizeX/2 + 0.03);
+        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.18; // bem acima da viga/palete, senão fica cortada
         const spr = addLabelSprite(String(e.data.pos), labelX, labelY, e.z, { color:"#000000", tiny:true });
         spr.visible = false;
         posLabels.push(spr);
@@ -1419,7 +1419,7 @@ function Armazem3D(){
       if(currentModeType === "none" || currentModeType === "busca") return true;
       if(currentModeType === "vazio") return false; // posições ocupadas somem inteiras (palete+caixa) nesse filtro
       const itens = entry.data.itens;
-      if(currentModeType === "vencido")     return itens.some(it => isTruthy(it[6]));
+      if(currentModeType === "vencido")     return entry.risco === "vencido";
       if(currentModeType === "danificado")  return itens.some(it => isTruthy(it[8]));
       if(currentModeType === "risco")       return !!entry.risco;
       if(currentModeType === "cliente")     return itens.some(it => String(it[0]||"").trim() === String(currentModeValue||"").trim());
@@ -1546,14 +1546,14 @@ function Armazem3D(){
 
     // ponteiros (arraste / pinça)
     const pointers = new Map();
-    let dragging = false, lastX=0, lastY=0, dragDistance=0;
+    let dragging = false, lastX=0, lastY=0, dragDistance=0, dragButton=0;
     let pinchStartDist=null, pinchStartMid=null, pinchStartTarget=null;
     const dist2 = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
     const mid2 = (a,b)=>({ x:(a.x+b.x)/2, y:(a.y+b.y)/2 });
 
     const onPointerDown = (e)=>{
       pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
-      if(pointers.size===1){ dragging=true; lastX=e.clientX; lastY=e.clientY; dragDistance=0; thetaVelocity=0; phiVelocity=0; }
+      if(pointers.size===1){ dragging=true; lastX=e.clientX; lastY=e.clientY; dragDistance=0; thetaVelocity=0; phiVelocity=0; dragButton=e.button; }
       else if(pointers.size===2){
         dragging=false;
         const pts = Array.from(pointers.values());
@@ -1588,7 +1588,7 @@ function Armazem3D(){
       const dx = e.clientX-lastX, dy = e.clientY-lastY;
       if(dragging){
         dragDistance += Math.abs(dx)+Math.abs(dy);
-        if(viewModeRef.current==="orbit" && e.ctrlKey){
+        if(viewModeRef.current==="orbit" && (e.ctrlKey || dragButton===2)){
           // Ctrl + arraste do mouse = "andar" pelo corredor sem precisar
           // trocar de modo — desloca o alvo da câmera (pan) na direção que
           // você arrasta, em vez de girar.
@@ -1619,11 +1619,14 @@ function Armazem3D(){
     const onKeyDown = (e)=>{ keys[e.code]=true; };
     const onKeyUp   = (e)=>{ keys[e.code]=false; };
 
+    const onContextMenu = (e)=>{ e.preventDefault(); };
+
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
     window.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("wheel", onWheel, { passive:false });
+    renderer.domElement.addEventListener("contextmenu", onContextMenu);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     renderer.domElement.style.touchAction = "none";
@@ -1668,17 +1671,15 @@ function Armazem3D(){
       setViewMode("orbit");
     };
 
-    // pula para uma rua e centraliza a visão no MEIO das posições daquela rua
-    // (em vez de olhar para um ponto qualquer perto do início)
+    // pula pro INÍCIO da rua, olhando de frente pra ela — vendo a plaquinha
+    // com o nome/número (que fica em z=-1.4, antes da coluna 1)
     api.current.jumpToRua = (rua)=>{
       const layer = mainLayout.ruaX[rua]!==undefined ? mainLayout : ficticiaLayout;
       const x = layer.ruaX[rua];
       if(x===undefined) return;
-      const maxCol = layer.maxColByRua[rua] || 1;
-      const midZ = (maxCol/2) * COL_SPACING;
-      orbitTarget.set(x, 1.7, midZ);
-      spherical.radius = clamp(maxCol*COL_SPACING*0.6 + 8, 8, maxOrbitRadius);
-      spherical.theta = Math.PI*0.18; spherical.phi = Math.PI/3;
+      orbitTarget.set(x, 1.8, 4);
+      spherical.radius = 11;
+      spherical.theta = Math.PI; spherical.phi = Math.PI/2.5;
       syncCameraTargets();
       setViewMode("orbit");
     };
@@ -1827,6 +1828,7 @@ function Armazem3D(){
       window.removeEventListener("keyup", onKeyUp);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("wheel", onWheel);
+      renderer.domElement.removeEventListener("contextmenu", onContextMenu);
       renderer.domElement.removeEventListener("mousemove", updatePointerNdc);
       renderer.domElement.removeEventListener("click", onClick);
       renderer.dispose();
