@@ -788,9 +788,21 @@ function Armazem3D(){
   });
   const [geminiKeyInput, setGeminiKeyInput] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState([]); // { role:"user"|"ia"|"erro", text, model? }
+  // histórico do chat persiste no navegador (localStorage) — assim ele
+  // "lembra" da conversa mesmo depois de fechar e reabrir a aba
+  const [chatMessages, setChatMessages] = useState(()=>{
+    try{ return JSON.parse(localStorage.getItem("estoque_chat_historico")||"[]"); }catch(e){ return []; }
+  }); // { role:"user"|"ia"|"erro", text, model? }
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+
+  useEffect(()=>{
+    try{ localStorage.setItem("estoque_chat_historico", JSON.stringify(chatMessages.slice(-60))); }catch(e){}
+  }, [chatMessages]);
+  const limparConversa = ()=>{
+    setChatMessages([]);
+    try{ localStorage.removeItem("estoque_chat_historico"); }catch(e){}
+  };
 
   const saveGeminiKey = ()=>{
     const k = geminiKeyInput.trim();
@@ -812,7 +824,9 @@ function Armazem3D(){
     try{
       const summary = buildEstoqueSummary(data);
       const slice = findRelevantSlice(data, q);
-      const historico = chatMessages.slice(-6).filter(m=>m.role==="user" || m.role==="ia");
+      // manda uma janela maior de histórico agora que ele persiste entre
+      // sessões — dá mais contexto de continuidade pra IA
+      const historico = chatMessages.slice(-16).filter(m=>m.role==="user" || m.role==="ia");
       const { text, model } = await askGeminiSobreEstoque(geminiKey, q, summary, slice, historico);
       setChatMessages(m=>[...m, { role:"ia", text, model }]);
     }catch(e){
@@ -1079,19 +1093,20 @@ function Armazem3D(){
       scene.add(mesh);
       return mesh;
     }
-    // decal PEQUENO deitado sobre o topo do palete, perto da borda que dá
-    // pro corredor — colado de verdade na superfície (não é sprite que vira
-    // pra câmera, é um plano deitado igual o texto do chão, só que bem menor
-    // e na altura do palete). Começa invisible; visibilidade controlada por
-    // distância no loop de renderização, igual as outras plaquinhas.
+    // placa PEQUENA e VERTICAL, fixa na borda do palete voltada pro
+    // corredor — diferente de sprite (não vira pra câmera: tem orientação
+    // fixa, real, "presa" no espaço 3D) e diferente do texto de chão
+    // (fica em pé, então dá pra ler andando pelo corredor e olhando de
+    // lado — deitado ficava de perfil/invisível nesse ângulo).
+    // depthTest desligado pra nunca ser cortada por viga/poste próximos.
     function addPalletDecal(text, x, y, z, faceDir, width){
       const tex = getFloorLabelTexture(text, "#000000");
-      const mat = new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false });
+      const mat = new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false, depthTest:false });
       const w = width || 0.42;
       const h = w * (192/1024);
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-      mesh.rotation.x = -Math.PI/2;
-      mesh.rotation.z = faceDir > 0 ? 0 : Math.PI; // texto sempre lendo do lado do corredor
+      mesh.rotation.y = faceDir * Math.PI/2; // normal da placa voltada pro corredor
+      mesh.renderOrder = 999;
       mesh.position.set(x, y, z);
       mesh.visible = false;
       scene.add(mesh);
@@ -1339,16 +1354,14 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // decal de identificação COLADO na superfície do topo do palete, perto
-      // da borda que dá pro corredor — não é mais sprite flutuante, é um
-      // plano deitado igual o texto do chão, só que bem pequeno e na altura
-      // exata do topo do palete (fica visualmente "grudado" nele).
+      // placa de identificação VERTICAL, fixa na borda do palete voltada pro
+      // corredor (não flutua, não vira pra câmera — orientação fixa de verdade)
       const posLabels = [];
       entries.forEach(e=>{
         const faceDir = layout.ruaFaceDir[e.data.rua] || 1;
-        const decalW = Math.min(0.42, palletSizeX*0.5);
-        const labelX = e.x + faceDir * (palletSizeX/2 - decalW/2 - 0.02);
-        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.006;
+        const decalW = 0.4;
+        const labelX = e.x + faceDir * (palletSizeX/2 + 0.015);
+        const labelY = e.palletY;
         const spr = addPalletDecal(String(e.data.pos), labelX, labelY, e.z, faceDir, decalW);
         posLabels.push(spr);
       });
@@ -1387,18 +1400,18 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // decal de posição colado no TOPO do marcador de vazia, perto da
-      // borda que dá pro corredor. Só aparece perto da câmera E com o
-      // filtro "Vazias" ativo (checado no loop de renderização via userData)
+      // placa de identificação VERTICAL, fixa na borda do marcador de vazia,
+      // voltada pro corredor. Só aparece perto da câmera E com o filtro
+      // "Vazias" ativo (checado no loop de renderização via userData)
       const posLabels = [];
       slots.forEach((s,i)=>{
         const faceDir = layout.ruaFaceDir[s.rua] || 1;
         const x = layout.ruaX[s.rua];
         const z = (s.col-0.5)*COL_SPACING;
-        const topY = entries[i].y + sizeY/2 + 0.006;
-        const decalW = Math.min(0.42, sizeX*0.5);
-        const labelX = x + faceDir * (sizeX/2 - decalW/2 - 0.02);
-        const spr = addPalletDecal(String(s.pos), labelX, topY, z, faceDir, decalW);
+        const midY = entries[i].y;
+        const decalW = 0.4;
+        const labelX = x + faceDir * (sizeX/2 + 0.015);
+        const spr = addPalletDecal(String(s.pos), labelX, midY, z, faceDir, decalW);
         spr.userData.emptyLabel = true;
         posLabels.push(spr);
       });
@@ -2110,7 +2123,10 @@ function Armazem3D(){
             cursor: chatLoading ? "default" : "pointer", opacity: chatLoading ? 0.6 : 1 } }, "Enviar"),
           h("button", { onClick:forgetGeminiKey, title:"Esquecer chave salva", style:{ padding:"6px 8px",
             borderRadius:6, border:"1px solid rgba(255,255,255,0.15)", background:"transparent",
-            color:"#6b6f74", fontSize:11, cursor:"pointer" } }, "\u{1F511}")))
+            color:"#6b6f74", fontSize:11, cursor:"pointer" } }, "\u{1F511}"),
+          h("button", { onClick:limparConversa, title:"Limpar conversa salva", style:{ padding:"6px 8px",
+            borderRadius:6, border:"1px solid rgba(255,255,255,0.15)", background:"transparent",
+            color:"#6b6f74", fontSize:11, cursor:"pointer" } }, "\u{1F5D1}\uFE0F")))
       )
     )
   );
