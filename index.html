@@ -1079,6 +1079,24 @@ function Armazem3D(){
       scene.add(mesh);
       return mesh;
     }
+    // decal PEQUENO deitado sobre o topo do palete, perto da borda que dá
+    // pro corredor — colado de verdade na superfície (não é sprite que vira
+    // pra câmera, é um plano deitado igual o texto do chão, só que bem menor
+    // e na altura do palete). Começa invisible; visibilidade controlada por
+    // distância no loop de renderização, igual as outras plaquinhas.
+    function addPalletDecal(text, x, y, z, faceDir, width){
+      const tex = getFloorLabelTexture(text, "#000000");
+      const mat = new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false });
+      const w = width || 0.42;
+      const h = w * (192/1024);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+      mesh.rotation.x = -Math.PI/2;
+      mesh.rotation.z = faceDir > 0 ? 0 : Math.PI; // texto sempre lendo do lado do corredor
+      mesh.position.set(x, y, z);
+      mesh.visible = false;
+      scene.add(mesh);
+      return mesh;
+    }
 
     // ---------------------------------------------------------------------
     // Constrói estrutura física (postes, vigas, rótulos) de um bloco de ruas
@@ -1321,21 +1339,17 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de identificação PRESA NA VIGA da estrutura, na altura
-      // daquele nível, alinhada em Z com a posição — não no palete nem na
-      // caixa. Motivo: entre o topo do palete e o fundo da caixa não sobra
-      // espaço nenhum (a caixa encosta direto no palete), então qualquer
-      // plaquinha ali ou corta na viga de baixo ou invade a caixa de cima.
-      // Presa na viga (voltada pro corredor), fica sempre livre e alinhada
-      // com a posição que representa.
+      // decal de identificação COLADO na superfície do topo do palete, perto
+      // da borda que dá pro corredor — não é mais sprite flutuante, é um
+      // plano deitado igual o texto do chão, só que bem pequeno e na altura
+      // exata do topo do palete (fica visualmente "grudado" nele).
       const posLabels = [];
       entries.forEach(e=>{
         const faceDir = layout.ruaFaceDir[e.data.rua] || 1;
-        const beamBaseY = BASE_LEVEL_Y + (e.data.niv-1)*LEVEL_HEIGHT;
-        const labelX = e.x + faceDir * (RACK_DEPTH/2 + 0.05);
-        const labelY = beamBaseY + 0.26;
-        const spr = addLabelSprite(String(e.data.pos), labelX, labelY, e.z, { color:"#000000", tiny:true });
-        spr.visible = false;
+        const decalW = Math.min(0.42, palletSizeX*0.5);
+        const labelX = e.x + faceDir * (palletSizeX/2 - decalW/2 - 0.02);
+        const labelY = e.palletY + PALLET_HEIGHT/2 + 0.006;
+        const spr = addPalletDecal(String(e.data.pos), labelX, labelY, e.z, faceDir, decalW);
         posLabels.push(spr);
       });
 
@@ -1373,19 +1387,18 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // plaquinha de posição também nas vazias — presa na viga, mesmo
-      // critério das ocupadas. Só aparece perto da câmera E com o filtro
-      // "Vazias" ativo (marcado via userData, checado no loop de renderização)
+      // decal de posição colado no TOPO do marcador de vazia, perto da
+      // borda que dá pro corredor. Só aparece perto da câmera E com o
+      // filtro "Vazias" ativo (checado no loop de renderização via userData)
       const posLabels = [];
-      slots.forEach(s=>{
+      slots.forEach((s,i)=>{
         const faceDir = layout.ruaFaceDir[s.rua] || 1;
         const x = layout.ruaX[s.rua];
         const z = (s.col-0.5)*COL_SPACING;
-        const beamBaseY = BASE_LEVEL_Y + (s.niv-1)*LEVEL_HEIGHT;
-        const labelX = x + faceDir * (RACK_DEPTH/2 + 0.05);
-        const labelY = beamBaseY + 0.26;
-        const spr = addLabelSprite(String(s.pos), labelX, labelY, z, { color:"#000000", tiny:true });
-        spr.visible = false;
+        const topY = entries[i].y + sizeY/2 + 0.006;
+        const decalW = Math.min(0.42, sizeX*0.5);
+        const labelX = x + faceDir * (sizeX/2 - decalW/2 - 0.02);
+        const spr = addPalletDecal(String(s.pos), labelX, topY, z, faceDir, decalW);
         spr.userData.emptyLabel = true;
         posLabels.push(spr);
       });
