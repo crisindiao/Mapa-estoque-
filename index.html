@@ -384,6 +384,37 @@ const GEMINI_MODEL_CANDIDATES = [
   "gemini-3.1-flash-lite",
   "gemini-3.5-flash"
 ];
+// chamada crua ao Gemini, com fallback entre modelos — compartilhada pelo
+// chat e pela análise estruturada, pra não duplicar a lógica de retry
+async function chamarGemini(apiKey, promptText, opts){
+  opts = opts || {};
+  let lastError = null;
+  for(const model of GEMINI_MODEL_CANDIDATES){
+    try{
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+        {
+          method: "POST",
+          headers: { "Content-Type":"application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { temperature: opts.temperature!=null?opts.temperature:0.3,
+              maxOutputTokens: opts.maxOutputTokens || 1536,
+              responseMimeType: opts.json ? "application/json" : undefined } })
+        }
+      );
+      if(!res.ok){ lastError = model + ": HTTP " + res.status; continue; }
+      const json = await res.json();
+      const text = json && json.candidates && json.candidates[0] && json.candidates[0].content &&
+        json.candidates[0].content.parts && json.candidates[0].content.parts[0] &&
+        json.candidates[0].content.parts[0].text;
+      if(text) return { text, model };
+      lastError = model + ": resposta vazia";
+    }catch(e){
+      lastError = model + ": " + (e.message||e);
+    }
+  }
+  throw new Error("Nenhum modelo do Gemini respondeu. Último erro: " + lastError);
+}
 async function askGeminiSobreEstoque(apiKey, question, summary, slice, historico){
   const promptText =
     "Você é um analista sênior de estoque e armazenagem, ajudando o gestor de um galpão a interpretar os " +
@@ -403,31 +434,42 @@ async function askGeminiSobreEstoque(apiKey, question, summary, slice, historico
     (historico && historico.length ? "HISTÓRICO RECENTE DA CONVERSA:\n" + historico.map(m=>
       (m.role==="user" ? "Usuário: " : "Você: ") + m.text).join("\n") + "\n\n" : "") +
     "PERGUNTA ATUAL: " + question;
+  return chamarGemini(apiKey, promptText, { temperature:0.3, maxOutputTokens:1536 });
+}
 
-  let lastError = null;
-  for(const model of GEMINI_MODEL_CANDIDATES){
-    try{
-      const res = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
-        {
-          method: "POST",
-          headers: { "Content-Type":"application/json", "x-goog-api-key": apiKey },
-          body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 1536 } })
-        }
-      );
-      if(!res.ok){ lastError = model + ": HTTP " + res.status; continue; }
-      const json = await res.json();
-      const text = json && json.candidates && json.candidates[0] && json.candidates[0].content &&
-        json.candidates[0].content.parts && json.candidates[0].content.parts[0] &&
-        json.candidates[0].content.parts[0].text;
-      if(text) return { text, model };
-      lastError = model + ": resposta vazia";
-    }catch(e){
-      lastError = model + ": " + (e.message||e);
-    }
-  }
-  throw new Error("Nenhum modelo do Gemini respondeu. Último erro: " + lastError);
+// -----------------------------------------------------------------------
+// ANÁLISE INTELIGENTE — em vez de esperar uma pergunta, pede pro Gemini
+// varrer o resumo inteiro e devolver um diagnóstico estruturado (JSON),
+// que a UI transforma em cartões: resumo executivo, riscos críticos,
+// oportunidades, anomalias e recomendações práticas e priorizadas.
+// -----------------------------------------------------------------------
+async function gerarAnaliseCompletaIA(apiKey, summary){
+  const promptText =
+    "Você é um consultor sênior de supply chain/WMS contratado pra dar um diagnóstico executivo do estoque " +
+    "de um centro de distribuição, pra ser apresentado à diretoria. Responda SOMENTE com um JSON válido " +
+    "(sem markdown, sem \\`\\`\\`, sem texto fora do JSON), em português do Brasil, no formato exato:\n" +
+    '{"resumoExecutivo":"2-3 frases objetivas sobre a saúde geral do estoque",' +
+    '"riscosCriticos":[{"titulo":"...","detalhe":"...","impacto":"alto|medio|baixo"}],' +
+    '"oportunidades":[{"titulo":"...","detalhe":"..."}],' +
+    '"anomalias":[{"titulo":"...","detalhe":"..."}],' +
+    '"recomendacoes":[{"acao":"...","motivo":"...","prioridade":"alta|media|baixa"}]}\n\n' +
+    "Regras:\n" +
+    "- Baseie-se SOMENTE nos números do RESUMO abaixo — não invente dados que não estão ali.\n" +
+    "- riscosCriticos: itens vencidos/a vencer/danificados que merecem atenção imediata, com números reais.\n" +
+    "- oportunidades: coisas como ruas quase lotadas, clientes concentrando muito volume, otimização de espaço.\n" +
+    "- anomalias: padrões estranhos nos dados (ex.: rua com alerta desproporcional, cliente só com problemas).\n" +
+    "- recomendacoes: 3 a 6 ações práticas e priorizadas, específicas o bastante pra alguém executar.\n" +
+    "- 3 a 6 itens em cada lista (menos se os dados não sustentarem mais que isso). Nunca deixe uma lista vazia " +
+    "se houver QUALQUER dado relevante no resumo; só deixe vazia se genuinamente não houver nada a reportar " +
+    "naquela categoria.\n\n" +
+    "RESUMO GERAL DO ESTOQUE (JSON):\n" + JSON.stringify(summary);
+
+  const { text, model } = await chamarGemini(apiKey, promptText, { temperature:0.25, maxOutputTokens:2400, json:true });
+  const cleaned = text.replace(/^```json\s*|\s*```$/g, "").trim();
+  let parsed;
+  try{ parsed = JSON.parse(cleaned); }
+  catch(e){ throw new Error("A IA respondeu num formato inesperado. Tente novamente."); }
+  return { analise: parsed, model };
 }
 
 /* =========================================================================
@@ -689,6 +731,88 @@ function InfoGalpaoPanel({ open, onClose, isMobile }){
   );
 }
 
+const IMPACTO_COR = { alto:"#e63946", medio:"#e8a13a", baixo:"#4a90a4" };
+const PRIORIDADE_COR = { alta:"#e63946", media:"#e8a13a", baixa:"#4a90a4" };
+
+function AnaliseIAPanel({ open, onClose, isMobile, geminiKey, analise, loading, erro, onGerar }){
+  if(!open) return null;
+  return h("div", {
+    style:{ position:"absolute", top:0, left:0, width:400, maxWidth:"92vw", height:"100%",
+      background:"rgba(17,20,23,0.98)", color:"#f4efe6", padding:"20px 18px", overflowY:"auto",
+      boxShadow:"8px 0 24px rgba(0,0,0,0.4)", fontFamily:"'Inter', system-ui, sans-serif",
+      borderRight:"1px solid rgba(232,161,58,0.3)", zIndex:21, fontSize:12.5, lineHeight:1.5 }
+  },
+    h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 } },
+      h("h2", { style:{ margin:0, fontSize:16, color:"#e8a13a" } }, "\u{1F9E0} Análise Inteligente"),
+      h("button", { onClick:onClose, style:{ background:"none", border:"none", color:"#a8a29a", fontSize:20, cursor:"pointer", lineHeight:1 } }, "\xD7")
+    ),
+    h("p", { style:{ margin:"0 0 12px", fontSize:10.5, color:"#6b6f74" } },
+      "Diagnóstico gerado por IA a partir dos dados atuais do estoque — não substitui a validação de um analista."),
+
+    !geminiKey && h("div", { style:{ fontSize:12, color:"#a8a29a", padding:"10px 0" } },
+      "Configure a chave do Gemini no chat (\u{1F916}) primeiro pra poder gerar a análise."),
+
+    geminiKey && h("button", { onClick:onGerar, disabled:loading, style:{ width:"100%", padding:"9px 12px",
+      borderRadius:8, border:"none", background: loading ? "rgba(232,161,58,0.4)" : "#c9781f", color:"#1c1408",
+      fontSize:13, fontWeight:700, cursor: loading ? "default" : "pointer", marginBottom:14 } },
+      loading ? "Analisando o estoque..." : (analise ? "\u{1F504} Atualizar análise" : "\u2728 Gerar análise agora")),
+
+    erro && h("div", { style:{ fontSize:11, color:"#ff8a80", marginBottom:12, background:"rgba(192,57,43,0.15)",
+      padding:"8px 10px", borderRadius:6 } }, "\u26A0 ", erro),
+
+    !analise && !loading && !erro && h("div", { style:{ fontSize:12, color:"#6b6f74", textAlign:"center", padding:"30px 10px" } },
+      "Nenhuma análise gerada ainda. Clique no botão acima."),
+
+    analise && h(React.Fragment, null,
+      h("div", { style:{ fontSize:10, color:"#6b6f74", marginBottom:10 } },
+        "Gerada em ", new Date(analise.geradaEm).toLocaleString("pt-BR"), analise.model ? " \xB7 " + analise.model : ""),
+
+      h("div", { style:{ background:"rgba(142,207,245,0.08)", border:"1px solid rgba(142,207,245,0.25)",
+        borderRadius:8, padding:"10px 12px", marginBottom:14, fontSize:12.5 } },
+        h("div", { style:{ fontWeight:700, color:"#8ecff5", marginBottom:4 } }, "Resumo executivo"),
+        analise.resumoExecutivo),
+
+      analise.riscosCriticos && analise.riscosCriticos.length>0 && h("div", { style:{ marginBottom:14 } },
+        h("div", { style:{ fontWeight:700, color:"#ff8a80", marginBottom:6 } }, "\u26A0 Riscos críticos"),
+        analise.riscosCriticos.map((r,i)=> h("div", { key:i, style:{ borderLeft:"3px solid "+(IMPACTO_COR[r.impacto]||"#e63946"),
+          background:"rgba(255,255,255,0.04)", padding:"6px 10px", marginBottom:6, borderRadius:4 } },
+          h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center" } },
+            h("strong", null, r.titulo),
+            r.impacto && h("span", { style:{ fontSize:9, textTransform:"uppercase", color:IMPACTO_COR[r.impacto]||"#e63946",
+              border:"1px solid "+(IMPACTO_COR[r.impacto]||"#e63946"), borderRadius:4, padding:"1px 5px" } }, r.impacto)),
+          h("div", { style:{ color:"#a8a29a", marginTop:2 } }, r.detalhe)))
+      ),
+
+      analise.oportunidades && analise.oportunidades.length>0 && h("div", { style:{ marginBottom:14 } },
+        h("div", { style:{ fontWeight:700, color:"#7fd99a", marginBottom:6 } }, "\u{1F4C8} Oportunidades"),
+        analise.oportunidades.map((o,i)=> h("div", { key:i, style:{ borderLeft:"3px solid #2e8b57",
+          background:"rgba(255,255,255,0.04)", padding:"6px 10px", marginBottom:6, borderRadius:4 } },
+          h("strong", null, o.titulo),
+          h("div", { style:{ color:"#a8a29a", marginTop:2 } }, o.detalhe)))
+      ),
+
+      analise.anomalias && analise.anomalias.length>0 && h("div", { style:{ marginBottom:14 } },
+        h("div", { style:{ fontWeight:700, color:"#d9a4ff", marginBottom:6 } }, "\u{1F50D} Anomalias"),
+        analise.anomalias.map((a,i)=> h("div", { key:i, style:{ borderLeft:"3px solid #8a4fb0",
+          background:"rgba(255,255,255,0.04)", padding:"6px 10px", marginBottom:6, borderRadius:4 } },
+          h("strong", null, a.titulo),
+          h("div", { style:{ color:"#a8a29a", marginTop:2 } }, a.detalhe)))
+      ),
+
+      analise.recomendacoes && analise.recomendacoes.length>0 && h("div", { style:{ marginBottom:6 } },
+        h("div", { style:{ fontWeight:700, color:"#e8a13a", marginBottom:6 } }, "\u2705 Recomendações"),
+        analise.recomendacoes.map((rc,i)=> h("div", { key:i, style:{ borderLeft:"3px solid "+(PRIORIDADE_COR[rc.prioridade]||"#e8a13a"),
+          background:"rgba(255,255,255,0.04)", padding:"6px 10px", marginBottom:6, borderRadius:4 } },
+          h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center" } },
+            h("strong", null, rc.acao),
+            rc.prioridade && h("span", { style:{ fontSize:9, textTransform:"uppercase", color:PRIORIDADE_COR[rc.prioridade]||"#e8a13a",
+              border:"1px solid "+(PRIORIDADE_COR[rc.prioridade]||"#e8a13a"), borderRadius:4, padding:"1px 5px" } }, rc.prioridade)),
+          h("div", { style:{ color:"#a8a29a", marginTop:2 } }, rc.motivo)))
+      )
+    )
+  );
+}
+
 const PALLET_HEIGHT = 0.14;
 // quantos "níveis de empilhamento" mostrar, de acordo com quantos lotes/SKUs
 // existem na posição — é uma representação GENÉRICA (não é a caixa real),
@@ -803,6 +927,30 @@ function Armazem3D(){
   const limparConversa = ()=>{
     setChatMessages([]);
     try{ localStorage.removeItem("estoque_chat_historico"); }catch(e){}
+  };
+
+  // --- Análise Inteligente (diagnóstico automático, não é chat) ---
+  const [analiseOpen, setAnaliseOpen] = useState(false);
+  const [analise, setAnalise] = useState(()=>{
+    try{ return JSON.parse(localStorage.getItem("estoque_analise_ia")||"null"); }catch(e){ return null; }
+  }); // { resumoExecutivo, riscosCriticos[], oportunidades[], anomalias[], recomendacoes[], geradaEm, model }
+  const [analiseLoading, setAnaliseLoading] = useState(false);
+  const [analiseErro, setAnaliseErro] = useState(null);
+  const gerarAnalise = async ()=>{
+    if(!geminiKey || analiseLoading || !data) return;
+    setAnaliseLoading(true);
+    setAnaliseErro(null);
+    try{
+      const summary = buildEstoqueSummary(data);
+      const { analise: resultado, model } = await gerarAnaliseCompletaIA(geminiKey, summary);
+      const comMeta = { ...resultado, geradaEm: new Date().toISOString(), model };
+      setAnalise(comMeta);
+      try{ localStorage.setItem("estoque_analise_ia", JSON.stringify(comMeta)); }catch(e){}
+    }catch(e){
+      setAnaliseErro(e.message || String(e));
+    }finally{
+      setAnaliseLoading(false);
+    }
   };
 
   const saveGeminiKey = ()=>{
@@ -2010,6 +2158,8 @@ function Armazem3D(){
       h("div", { style:{ display:"flex", gap:6, flexWrap:"wrap" } },
         h("button", { onClick:()=>setInfoOpen(o=>!o), style:{ background: infoOpen ? "#2a6f77" : "rgba(255,255,255,0.08)",
           color:"#8ecff5", border:"none", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u2139\uFE0F Dados do galpão"),
+        h("button", { onClick:()=>setAnaliseOpen(o=>!o), style:{ background: analiseOpen ? "#c9781f" : "rgba(255,255,255,0.08)",
+          color: analiseOpen ? "#1c1408" : "#e8a13a", border:"none", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u{1F9E0} Análise IA"),
         h("button", { onClick: resetView, style:{ background:"rgba(255,255,255,0.08)", color:"#f4efe6", border:"none",
           borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u{1F3E0} Visão geral"),
         [["orbit","\u{1F5B1}\uFE0F Órbita"], ["walk","\u{1F6B6} Andar"]].map(([m,label]) =>
@@ -2098,6 +2248,8 @@ function Armazem3D(){
 
       h(DetailPanel, { selected, onClose:()=>setSelected(null) }),
       h(InfoGalpaoPanel, { open: infoOpen, onClose:()=>setInfoOpen(false), isMobile }),
+      h(AnaliseIAPanel, { open: analiseOpen, onClose:()=>setAnaliseOpen(false), isMobile,
+        geminiKey, analise, loading: analiseLoading, erro: analiseErro, onGerar: gerarAnalise }),
 
       // --- IA do estoque (Gemini) : botão flutuante + painel de chat ---
       // no celular, em modo "Andar" o D-pad ocupa o canto inferior direito, então o chat sobe pro topo pra não colidir
