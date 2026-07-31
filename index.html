@@ -750,6 +750,7 @@ function Armazem3D(){
   const [viewMode, setViewMode] = useState("orbit"); // "orbit" | "walk"
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
+  const [walkInputMode, setWalkInputMode] = useState("mouse"); // "mouse" | "teclado" — só quando viewMode="walk"
 
   // modo único de visualização: busca livre, cliente, vencidos, danificados ou vazios
   const [mode, setMode] = useState({ type:"none" });
@@ -1400,23 +1401,31 @@ function Armazem3D(){
       if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
 
-      // placa de identificação VERTICAL, fixa na borda do marcador de vazia,
-      // voltada pro corredor. Só aparece perto da câmera E com o filtro
-      // "Vazias" ativo (checado no loop de renderização via userData)
+      // placa de identificação VERTICAL de cada vazia — são MILHARES (cada
+      // uma com textura própria), então NÃO cria tudo de cara: isso pesava
+      // bastante no carregamento inicial pra algo que só aparece quando o
+      // filtro "Vazias" é ligado. Fica adiado até a primeira vez que alguém
+      // realmente ativa o filtro (ver ensureLabels/api.current.applyMode).
       const posLabels = [];
-      slots.forEach((s,i)=>{
-        const faceDir = layout.ruaFaceDir[s.rua] || 1;
-        const x = layout.ruaX[s.rua];
-        const z = (s.col-0.5)*COL_SPACING;
-        const midY = entries[i].y;
-        const decalW = 0.4;
-        const labelX = x + faceDir * (sizeX/2 + 0.015);
-        const spr = addPalletDecal(String(s.pos), labelX, midY, z, faceDir, decalW);
-        spr.userData.emptyLabel = true;
-        posLabels.push(spr);
-      });
+      let labelsBuilt = false;
+      function ensureLabels(){
+        if(labelsBuilt) return posLabels;
+        labelsBuilt = true;
+        slots.forEach((s,i)=>{
+          const faceDir = layout.ruaFaceDir[s.rua] || 1;
+          const x = layout.ruaX[s.rua];
+          const z = (s.col-0.5)*COL_SPACING;
+          const midY = entries[i].y;
+          const decalW = 0.4;
+          const labelX = x + faceDir * (sizeX/2 + 0.015);
+          const spr = addPalletDecal(String(s.pos), labelX, midY, z, faceDir, decalW);
+          spr.userData.emptyLabel = true;
+          posLabels.push(spr);
+        });
+        return posLabels;
+      }
 
-      return { mesh, entries, writeMatrix, posLabels };
+      return { mesh, entries, writeMatrix, posLabels, ensureLabels };
     }
 
     const mainOccupied = buildOccupiedLayer(mainLayout);
@@ -1543,6 +1552,11 @@ function Armazem3D(){
     api.current.applyMode = (m)=>{
       currentModeType = m.type;
       currentModeValue = m.value || null;
+      if(m.type === "vazio"){
+        const novasLabels = emptyHighlight.ensureLabels();
+        // se acabaram de ser criadas agora, entra pro array geral de culling
+        novasLabels.forEach(l=>{ if(!allPosLabels.includes(l)) allPosLabels.push(l); });
+      }
       if(m.type === "busca"){
         refreshAllVisuals();
         const q = m.value.toUpperCase();
@@ -2056,13 +2070,31 @@ function Armazem3D(){
       h("div", { ref: mountRef, style:{ width:"100%", height:"100%", cursor: viewMode==="walk" ? "crosshair" : "grab" } }),
 
       // --- controles de caminhada ---
-      viewMode==="walk" && h("div", { style:{ position:"absolute", bottom: isMobile?16:24, right: isMobile?16:24, zIndex:10 } },
+      viewMode==="walk" && h("div", { style:{ position:"absolute", top: isMobile?12:16, left: isMobile?12:20, zIndex:10,
+        display:"flex", gap:6 } },
+        h("button", { onClick:()=>setWalkInputMode("mouse"), style:{ padding:"6px 12px", borderRadius:6,
+          border:"none", background: walkInputMode==="mouse" ? "#2a6f77" : "rgba(20,24,28,0.85)",
+          color:"#f4efe6", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u{1F5B1}\uFE0F Mouse"),
+        h("button", { onClick:()=>setWalkInputMode("teclado"), style:{ padding:"6px 12px", borderRadius:6,
+          border:"none", background: walkInputMode==="teclado" ? "#2a6f77" : "rgba(20,24,28,0.85)",
+          color:"#f4efe6", fontSize:12, fontWeight:600, cursor:"pointer" } }, "\u2328\uFE0F Teclado")
+      ),
+
+      viewMode==="walk" && walkInputMode==="mouse" && h("div", { style:{ position:"absolute", bottom: isMobile?16:24, right: isMobile?16:24, zIndex:10 } },
         h("div", { style:{ display:"grid", gridTemplateColumns:"repeat(3, 52px)", gridTemplateRows:"repeat(2, 52px)", gap:6, justifyItems:"center" } },
           h("div", null), h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyW") }, "\u25B2"), h("div", null),
           h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyA") }, "\u25C0"),
           h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyS") }, "\u25BC"),
           h("button", { style:dpadBtnStyle, ...dpadHandlers("KeyD") }, "\u25B6")),
-        h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr")),
+        h("button", { style:{ ...dpadBtnStyle, width:"100%", borderRadius:10, marginTop:8, fontSize:12 }, ...dpadHandlers("run") }, "\u{1F3C3} Correr"),
+        h("div", { style:{ marginTop:8, fontSize:10, color:"#a8a29a", textAlign:"center", maxWidth:170 } }, "Arraste a tela p/ olhar ao redor \xB7 use as setas pra andar")),
+
+      viewMode==="walk" && walkInputMode==="teclado" && h("div", { style:{ position:"absolute", bottom: isMobile?16:24, right: isMobile?16:24, zIndex:10,
+        background:"rgba(20,24,28,0.88)", borderRadius:10, padding:"12px 16px", color:"#f4efe6", fontSize:12, maxWidth:200 } },
+        h("div", { style:{ fontWeight:700, marginBottom:6 } }, "\u2328\uFE0F Controles do teclado"),
+        h("div", null, "W A S D ou setas \u2014 andar"),
+        h("div", null, "Shift \u2014 correr"),
+        h("div", { style:{ marginTop:4, color:"#a8a29a" } }, "Arraste o mouse na tela p/ olhar ao redor")),
 
       h(DetailPanel, { selected, onClose:()=>setSelected(null) }),
       h(InfoGalpaoPanel, { open: infoOpen, onClose:()=>setInfoOpen(false), isMobile }),
